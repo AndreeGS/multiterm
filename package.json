@@ -1,0 +1,31 @@
+{
+  "name": "multiterm",
+  "version": "0.1.0",
+  "description": "Central visual para executar e acompanhar varios terminais/agentes simultaneamente",
+  "main": "dist/main/main.js",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron . --dev",
+    "postinstall": "electron-rebuild -f -w node-pty",
+    "smoke": "npm run build && electron dist/test/pty-smoke.js --no-sandbox",
+    "start:no-sandbox": "npm run build && electron . --no-sandbox",
+    "app:install": "npm run build && node scripts/install-desktop.mjs",
+    "app:uninstall": "node scripts/install-desktop.mjs --uninstall"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "@types/node": "^22.10.0",
+    "electron": "^33.2.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.2"
+  }
+}

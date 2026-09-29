@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Lancador do MultiTerm. Resolve o diretorio do projeto a partir da propria
+# localizacao, entao funciona por symlink (~/.local/bin/multiterm) e pelo
+# atalho do menu de aplicativos.
+set -euo pipefail
+
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  TARGET="$(readlink "$SELF")"
+  case "$TARGET" in
+    /*) SELF="$TARGET" ;;
+    *) SELF="$(dirname "$SELF")/$TARGET" ;;
+  esac
+done
+APP_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
+
+cd "$APP_DIR"
+
+# Primeira execucao (ou apos git pull) ainda nao tem bundle.
+if [ ! -f dist/main/main.js ]; then
+  npm run build
+fi
+
+ARGS=()
+# O chrome-sandbox so funciona com setuid root. Sem isso o Chromium aborta —
+# entao caimos para --no-sandbox em vez de falhar na cara do usuario.
+if [ ! -u node_modules/electron/dist/chrome-sandbox ]; then
+  ARGS+=(--no-sandbox)
+fi
+
+# --class casa com StartupWMClass no .desktop, para a janela agrupar no icone certo.
+exec node_modules/.bin/electron "$APP_DIR" --class=MultiTerm "${ARGS[@]}" "$@"

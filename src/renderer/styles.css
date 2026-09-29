@@ -1,0 +1,315 @@
+:root {
+  --bg: #0f1116;
+  --bg-panel: #151822;
+  --bg-header: #1b1f2b;
+  --border: #272c3a;
+  --border-active: #3d6fe0;
+  --fg: #d5d9e4;
+  --fg-dim: #7d8598;
+  --accent: #6ea8fe;
+  --running: #3fb950;
+  --idle: #d29922;
+  --exited: #6e7681;
+  --error: #f85149;
+  --radius: 6px;
+}
+
+* { box-sizing: border-box; }
+
+/* Regras de display (grid/flex) venceriam o atributo `hidden` sem isto. */
+[hidden] { display: none !important; }
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.4 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
+
+button {
+  font: inherit;
+  color: var(--fg);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { background: #232838; border-color: #3a4153; }
+button:disabled { opacity: 0.4; cursor: default; }
+button.primary { background: #2b4a8f; border-color: #35589f; }
+button.primary:hover { background: #33559f; }
+
+/* ---------- barra de rolagem ---------- */
+/* Vale para a pagina, para o viewport do xterm e para a lista de recentes. */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-color: #333a4d;
+  border-radius: 6px;
+  /* A borda transparente + background-clip afina o polegar sem estreitar a
+     area clicavel. */
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: #47506a; background-clip: content-box; }
+::-webkit-scrollbar-thumb:active { background-color: #5a6480; background-clip: content-box; }
+
+/* O xterm pinta o proprio viewport; sem isto a trilha volta a ser clara. */
+.xterm-viewport { background-color: transparent !important; }
+
+/* Nao declarar `scrollbar-width`/`scrollbar-color` em lugar nenhum: ao ver uma
+   dessas propriedades padrao, o Chromium abandona as regras ::-webkit-scrollbar
+   do elemento e volta a desenhar a barra clara do sistema. */
+
+/* ---------- layout raiz ---------- */
+#app {
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-header);
+  border-bottom: 1px solid var(--border);
+}
+.toolbar .brand {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-right: 4px;
+}
+.toolbar .spacer { flex: 1; }
+.toolbar .group {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.toolbar .label {
+  color: var(--fg-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.layout-btn { min-width: 32px; padding: 4px 8px; }
+.layout-btn.active { background: #2b4a8f; border-color: #35589f; }
+
+/* ---------- consumo de tokens ---------- */
+.usage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.usage:hover { border-color: #3a4153; color: var(--fg); }
+.usage b {
+  color: var(--fg-dim);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  margin-right: 3px;
+}
+.usage-divider { color: var(--border); }
+
+/* ---------- grade ---------- */
+.grid-wrap {
+  position: relative;
+  overflow: hidden;
+}
+.grid {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  height: 100%;
+}
+.empty {
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  height: 100%;
+  color: var(--fg-dim);
+  text-align: center;
+}
+.empty kbd {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+}
+
+/* ---------- painel ---------- */
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.pane.focused { border-color: var(--border-active); }
+.pane.attention { border-color: var(--idle); }
+.pane.attention .pane-header { background: #2a2416; }
+.pane.attention .status-dot { animation: pulse 1.6s ease-in-out infinite; }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.8); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane.attention .status-dot { animation: none; }
+}
+
+.attention-btn {
+  border-color: var(--idle);
+  color: var(--idle);
+}
+.attention-btn:hover:not(:disabled) { background: #2a2416; border-color: var(--idle); }
+
+.pane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: var(--bg-header);
+  border-bottom: 1px solid var(--border);
+  min-height: 30px;
+}
+.pane-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.pane-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pane-cwd {
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pane-actions { display: flex; gap: 2px; }
+.pane-actions button {
+  border-color: transparent;
+  padding: 2px 6px;
+  color: var(--fg-dim);
+  line-height: 1;
+}
+.pane-actions button:hover { color: var(--fg); }
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--exited);
+}
+.status-dot[data-status="starting"] { background: var(--accent); }
+.status-dot[data-status="running"] { background: var(--running); box-shadow: 0 0 6px var(--running); }
+.status-dot[data-status="idle"] { background: var(--idle); }
+.status-dot[data-status="exited"] { background: var(--exited); }
+.status-dot[data-status="error"] { background: var(--error); box-shadow: 0 0 6px var(--error); }
+
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 2px 4px 6px;
+  user-select: text;
+}
+.pane-body .xterm { height: 100%; }
+
+.rename-input {
+  font: inherit;
+  font-weight: 600;
+  color: var(--fg);
+  background: #0d0f15;
+  border: 1px solid var(--border-active);
+  border-radius: 3px;
+  padding: 0 4px;
+  width: 100%;
+}
+
+/* ---------- modal ---------- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 7, 12, 0.65);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+}
+.modal {
+  width: min(560px, 90vw);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.modal h2 { margin: 0; font-size: 15px; }
+.modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+}
+.modal input[type="text"] {
+  font: 13px ui-monospace, "JetBrains Mono", Menlo, monospace;
+  color: var(--fg);
+  background: #0d0f15;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 9px;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.modal input[type="text"]:focus { outline: none; border-color: var(--border-active); }
+.dir-row { display: flex; gap: 6px; }
+.dir-row input { flex: 1; }
+.recent {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-height: 110px;
+  overflow-y: auto;
+}
+.recent button {
+  font: 11px ui-monospace, Menlo, monospace;
+  padding: 3px 7px;
+  color: var(--fg-dim);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
