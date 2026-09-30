@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type { TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js';
 import type { UsageSummary } from '../domain/usage/types.js';
-import type { LayoutId } from '../domain/workspace/layout.js';
+import type { NotePatch } from '../domain/notes/note.js';
+import type { GridLayoutId, LayoutId, TrackSizes } from '../domain/workspace/layout.js';
 import { CHANNELS, type BootstrapState, type MultiTermApi } from '../shared/contract.js';
 
 /** Inscreve um canal e devolve a funcao de cancelamento. */
@@ -29,6 +30,12 @@ const api: MultiTermApi = {
   writeTerminal: (id, data) => ipcRenderer.send(CHANNELS.write, id, data),
   resizeTerminal: (id, cols, rows) => ipcRenderer.send(CHANNELS.resize, id, cols, rows),
   setLayout: (layout: LayoutId) => ipcRenderer.send(CHANNELS.setLayout, layout),
+  setLayoutSizes: (layout: GridLayoutId, sizes: TrackSizes) =>
+    ipcRenderer.send(CHANNELS.setLayoutSizes, layout, sizes),
+
+  createNote: () => ipcRenderer.invoke(CHANNELS.noteCreate),
+  updateNote: (id: string, patch: NotePatch) => ipcRenderer.send(CHANNELS.noteUpdate, id, patch),
+  deleteNote: (id: string) => ipcRenderer.invoke(CHANNELS.noteDelete, id),
 
   getUsage: () => ipcRenderer.invoke(CHANNELS.usageGet) as Promise<UsageSummary>,
   refreshUsage: () => ipcRenderer.send(CHANNELS.usageRefresh),

@@ -2,8 +2,12 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import type { TerminalSnapshot } from '../../domain/terminal/types.js';
+import type { CanvasRect } from '../../domain/workspace/layout.js';
 import type { MultiTermApi } from '../../shared/contract.js';
 import { shortenPath } from '../paths.js';
+import { beginRename, button, el, type Panel } from './panel.js';
+
+const FONT_SIZE = 12;
 
 const STATUS_LABEL: Record<TerminalSnapshot['status'], string> = {
   starting: 'iniciando',
@@ -24,8 +28,11 @@ export interface PaneCallbacks {
  * O elemento raiz sobrevive a mudancas de layout: a grade apenas o reposiciona,
  * de modo que o scrollback nunca e perdido.
  */
-export class TerminalPane {
+export class TerminalPane implements Panel {
   readonly element: HTMLElement;
+  readonly header: HTMLElement;
+  /** Terminais nao sao persistidos, entao a posicao na area livre fica so em memoria. */
+  canvasRect: CanvasRect | null = null;
   private readonly term: Terminal;
   private readonly fit = new FitAddon();
   private readonly dot: HTMLElement;
@@ -47,7 +54,7 @@ export class TerminalPane {
     this.element = el('div', 'pane');
     this.element.dataset.id = snapshot.id;
 
-    const header = el('div', 'pane-header');
+    const header = (this.header = el('div', 'pane-header'));
     this.dot = el('span', 'status-dot');
     this.nameEl = el('div', 'pane-name');
     this.cwdEl = el('div', 'pane-cwd');
@@ -55,7 +62,9 @@ export class TerminalPane {
     const title = el('div', 'pane-title');
     title.append(this.nameEl, this.cwdEl);
     title.title = 'Duplo clique para renomear';
-    title.addEventListener('dblclick', () => this.beginRename());
+    title.addEventListener('dblclick', () =>
+      beginRename(this.nameEl, this.snapshot.name, (name) => void this.api.renameTerminal(this.id, name)),
+    );
 
     const actions = el('div', 'pane-actions');
     this.maximizeBtn = button('⤢', 'Maximizar / restaurar', () =>
@@ -76,7 +85,7 @@ export class TerminalPane {
 
     this.term = new Terminal({
       fontFamily: 'ui-monospace, "JetBrains Mono", "Fira Code", Menlo, monospace',
-      fontSize: 12,
+      fontSize: FONT_SIZE,
       lineHeight: 1.2,
       cursorBlink: true,
       scrollback: 10_000,
@@ -126,6 +135,15 @@ export class TerminalPane {
 
   setMaximized(maximized: boolean): void {
     this.maximizeBtn.textContent = maximized ? '⤡' : '⤢';
+  }
+
+  setScale(scale: number): void {
+    // Fonte e painel escalam juntos, entao cols/rows quase nao mudam e o
+    // shell raramente recebe um resize por causa do zoom.
+    const size = FONT_SIZE * scale;
+    if (this.term.options.fontSize === size) return;
+    this.term.options.fontSize = size;
+    this.refit();
   }
 
   setFocused(focused: boolean): void {
@@ -183,49 +201,4 @@ export class TerminalPane {
     }
     return true;
   }
-
-  private beginRename(): void {
-    const input = document.createElement('input');
-    input.className = 'rename-input';
-    input.value = this.snapshot.name;
-    this.nameEl.replaceWith(input);
-    input.focus();
-    input.select();
-
-    let done = false;
-    const finish = (commit: boolean) => {
-      if (done) return;
-      done = true;
-      input.replaceWith(this.nameEl);
-      if (commit && input.value.trim()) {
-        void this.api.renameTerminal(this.id, input.value);
-      }
-    };
-    input.addEventListener('blur', () => finish(true), { once: true });
-    input.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') input.blur();
-      if (event.key === 'Escape') finish(false);
-      event.stopPropagation();
-    });
-  }
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  className: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  node.className = className;
-  return node;
-}
-
-function button(label: string, title: string, onClick: () => void): HTMLButtonElement {
-  const node = document.createElement('button');
-  node.textContent = label;
-  node.title = title;
-  node.addEventListener('click', (event) => {
-    event.stopPropagation();
-    onClick();
-  });
-  return node;
 }

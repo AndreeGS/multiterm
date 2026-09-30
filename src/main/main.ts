@@ -2,11 +2,14 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { TerminalService } from '../application/terminal/terminal-service.js';
+import { NotesService } from '../application/notes/notes-service.js';
 import { UsageService } from '../application/usage/usage-service.js';
 import { WorkspaceService } from '../application/workspace/workspace-service.js';
+import type { NotePatch } from '../domain/notes/note.js';
 import type { TerminalSpec } from '../domain/terminal/types.js';
-import { isLayout } from '../domain/workspace/layout.js';
+import { isGridLayout, isLayout, parseTrackSizes } from '../domain/workspace/layout.js';
 import { JsonConfigStore } from '../infrastructure/persistence/json-config-store.js';
+import { JsonNotesStore } from '../infrastructure/persistence/json-notes-store.js';
 import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
 import { CHANNELS, type BootstrapState } from '../shared/contract.js';
 import { AttentionNotifier } from './attention.js';
@@ -16,6 +19,7 @@ let workspace: WorkspaceService;
 let terminals: TerminalService;
 let attention: AttentionNotifier;
 let usage: UsageService;
+let notes: NotesService;
 
 function send(channel: string, ...args: unknown[]): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -71,6 +75,8 @@ function registerIpc(): void {
     const config = workspace.current();
     return {
       layout: config.layout,
+      layoutSizes: config.layoutSizes,
+      notes: notes.list(),
       recentDirs: config.recentDirs,
       terminals: terminals.list(),
       defaultDir: config.recentDirs[0] ?? homedir(),
@@ -114,6 +120,17 @@ function registerIpc(): void {
   ipcMain.on(CHANNELS.setLayout, (_event, layout: unknown) => {
     if (isLayout(layout)) workspace.setLayout(layout);
   });
+  ipcMain.on(CHANNELS.setLayoutSizes, (_event, layout: unknown, sizes: unknown) => {
+    if (!isGridLayout(layout)) return;
+    const parsed = parseTrackSizes(layout, sizes);
+    if (parsed) workspace.setLayoutSizes(layout, parsed);
+  });
+
+  ipcMain.handle(CHANNELS.noteCreate, () => notes.create());
+  ipcMain.on(CHANNELS.noteUpdate, (_event, id: string, patch: NotePatch) => {
+    if (typeof patch === 'object' && patch !== null) notes.update(id, patch);
+  });
+  ipcMain.handle(CHANNELS.noteDelete, (_event, id: string) => notes.remove(id));
 }
 
 // Uma unica instancia: abrir de novo apenas foca a janela existente.
@@ -128,6 +145,7 @@ if (!app.requestSingleInstanceLock()) {
 
   void app.whenReady().then(() => {
     workspace = new WorkspaceService(new JsonConfigStore(app.getPath('userData')));
+    notes = new NotesService(new JsonNotesStore(app.getPath('userData')));
     attention = new AttentionNotifier(() => mainWindow);
     terminals = new TerminalService(new NodePtyFactory(), {
       onData: (id, chunk) => send(CHANNELS.data, id, chunk),
@@ -159,5 +177,6 @@ if (!app.requestSingleInstanceLock()) {
     usage?.stop();
     terminals?.closeAll();
     workspace?.flush();
+    notes?.flush();
   });
 }

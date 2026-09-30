@@ -100,8 +100,21 @@ button.primary:hover { background: #33559f; }
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
-.layout-btn { min-width: 32px; padding: 4px 8px; }
+.layout-btn {
+  display: grid;
+  place-items: center;
+  min-width: 32px;
+  padding: 4px 6px;
+}
 .layout-btn.active { background: #2b4a8f; border-color: #35589f; }
+.layout-icon rect {
+  fill: none;
+  stroke: var(--fg-dim);
+  stroke-width: 1;
+}
+.layout-btn:hover .layout-icon rect,
+.layout-btn.active .layout-icon rect { stroke: var(--fg); }
+.layout-btn.active .layout-icon rect { fill: rgba(110, 168, 254, 0.18); }
 
 /* ---------- consumo de tokens ---------- */
 .usage {
@@ -134,19 +147,120 @@ button.primary:hover { background: #33559f; }
   overflow: hidden;
 }
 .grid {
+  /* padding e gap precisam bater com PAD/GAP em components/grid.ts. */
+  position: relative;
   display: grid;
   gap: 8px;
   padding: 8px;
   height: 100%;
 }
 .empty {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   display: grid;
   place-content: center;
   gap: 10px;
-  height: 100%;
   color: var(--fg-dim);
   text-align: center;
+  pointer-events: none;
 }
+
+/* ---------- divisores arrastaveis ---------- */
+.gutter {
+  position: absolute;
+  z-index: 2;
+  border-radius: 3px;
+}
+.gutter-col { cursor: col-resize; }
+.gutter-row { cursor: row-resize; }
+.gutter::after {
+  content: "";
+  position: absolute;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.12s;
+}
+.gutter-col::after { inset: 25% 3px; }
+.gutter-row::after { inset: 3px 25%; }
+.gutter:hover::after,
+body.dragging .gutter::after { background: var(--border-active); }
+
+/* Durante um arrasto, nenhum painel captura o mouse nem seleciona texto. */
+body.dragging .pane-body { pointer-events: none; user-select: none; }
+
+/* ---------- area livre ---------- */
+.canvas {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  background-color: var(--bg);
+  background-image: radial-gradient(circle, #262b3a 1px, transparent 1.2px);
+  background-size: 24px 24px;
+}
+.canvas.panning { cursor: grabbing; }
+.canvas-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+}
+.canvas-zoom {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 100001;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-header);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  cursor: auto;
+}
+.canvas-zoom button {
+  border-color: transparent;
+  padding: 2px 8px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+.canvas-zoom button:hover:not(:disabled) { color: var(--fg); }
+.canvas-zoom .zoom-label { min-width: 52px; }
+.pane.floating {
+  position: absolute;
+  cursor: auto;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+.pane.floating.canvas-max {
+  /* !important vence o left/top/width/height inline da posicao flutuante. */
+  left: 8px !important;
+  top: 8px !important;
+  right: 8px;
+  bottom: 8px;
+  width: auto !important;
+  height: auto !important;
+  z-index: 100000 !important;
+}
+.pane.floating.canvas-max .resize-handle { display: none; }
+.drag-handle { cursor: grab; }
+body.dragging .drag-handle { cursor: grabbing; }
+.resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  z-index: 1;
+  background:
+    linear-gradient(135deg, transparent 55%, var(--fg-dim) 55%, var(--fg-dim) 62%, transparent 62%,
+      transparent 74%, var(--fg-dim) 74%, var(--fg-dim) 81%, transparent 81%);
+  opacity: 0.5;
+}
+.resize-handle:hover { opacity: 1; }
 .empty kbd {
   background: var(--bg-panel);
   border: 1px solid var(--border);
@@ -242,6 +356,31 @@ button.primary:hover { background: #33559f; }
   user-select: text;
 }
 .pane-body .xterm { height: 100%; }
+
+/* ---------- bloco de notas ---------- */
+.note-icon {
+  flex: none;
+  width: 8px;
+  color: var(--accent);
+  font-size: 12px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+.note-body { padding: 0; display: flex; }
+.note-editor {
+  flex: 1;
+  resize: none;
+  border: 0;
+  outline: none;
+  margin: 0;
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--fg);
+  font: 12.5px/1.5 ui-monospace, "JetBrains Mono", "Fira Code", Menlo, monospace;
+  tab-size: 4;
+}
+.note-editor::placeholder { color: var(--fg-dim); opacity: 0.6; }
 
 .rename-input {
   font: inherit;

@@ -56,13 +56,66 @@ npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 | --- | --- |
 | `Ctrl+T` | Novo terminal (fora do foco de um terminal) |
 | `Ctrl+Shift+T` | Novo terminal (sempre) |
-| `Ctrl+Shift+W` | Fechar o terminal em foco |
-| `Ctrl+Shift+M` | Maximizar / restaurar o terminal em foco |
+| `Ctrl+Shift+N` | Novo bloco de notas |
+| `Ctrl+Shift+W` | Fechar o painel em foco |
+| `Ctrl+Shift+M` | Maximizar / restaurar o painel em foco |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copiar / colar (o `Ctrl+C` puro continua sendo SIGINT) |
 | Duplo clique no nome | Renomear |
 
 Botoes de cada painel: `■` interromper (Ctrl+C), `⟳` reiniciar o shell,
 `⤢` maximizar, `✕` fechar.
+
+## Layouts
+
+Os botoes de layout na barra superior mostram a forma de cada um:
+
+| Layout | Forma |
+| --- | --- |
+| 1, 2 | um painel / dois lado a lado |
+| 3 | um painel de altura inteira a esquerda, dois empilhados a direita |
+| 4, 6, 8 | grades 2x2, 3x2, 4x2 |
+| Livre | area livre com paineis flutuantes (ver abaixo) |
+
+Nas grades, **as divisorias entre os paineis sao arrastaveis**; duplo clique
+numa divisoria volta as proporcoes para iguais. As proporcoes ficam salvas por
+layout no `config.json`.
+
+Quando ha mais paineis do que cabem, a grade pagina. Uma pagina incompleta usa
+a menor grade que comporta o que sobrou (3 paineis no layout 4 aparecem na
+forma do layout 3) em vez de deixar celulas vazias.
+
+### Area livre
+
+O fundo vira um plano infinito, e cada painel e uma janela flutuante:
+
+- arrastar o **cabecalho** move o painel; a **quina inferior direita** redimensiona;
+- clicar num painel traz ele para a frente;
+- arrastar o **fundo** (ou usar a roda do mouse nele) move a vista; duplo
+  clique no fundo volta ao inicio;
+- **zoom**: `Ctrl` + roda do mouse (ancorado no cursor, funciona ate em cima
+  de um painel) ou os botoes `−` / `+` no canto inferior direito, de 30% a 200%.
+  Clicar na porcentagem volta a 100%; `Ajustar` enquadra todos os paineis;
+- `⤢` maximiza o painel ocupando a vista inteira (sempre em 100%).
+
+O zoom e "semantico": em vez de um `transform: scale` (que borra o texto e
+desalinha o mouse das celulas do xterm), posicao e tamanho dos paineis sao
+multiplicados pelo zoom e cada painel ajusta a propria fonte. Selecao e clique
+no terminal continuam precisos em qualquer zoom, e como fonte e painel escalam
+juntos, o numero de colunas/linhas do shell praticamente nao muda.
+
+A posicao das notas na area livre e salva; a dos terminais vale so para a
+sessao, como os proprios terminais.
+
+## Bloco de notas
+
+`+ Nota` (ou `Ctrl+Shift+N`) abre um painel de texto puro ao lado dos
+terminais, para comandos, TODOs, anotacoes de um agente etc. Funciona em
+qualquer layout, igual a um terminal (maximizar, renomear com duplo clique).
+
+- Salva sozinho enquanto voce digita, em `notes.json` ao lado do `config.json`,
+  e as notas reabrem quando o app inicia.
+- `Tab` indenta; `⧉` copia o texto inteiro.
+- Fechar (`✕`) **apaga** a nota; se ela tiver conteudo, o app pede confirmacao.
 
 ## Indicador de atividade
 
@@ -126,9 +179,13 @@ tokens, mas nao custo, e sao listados no tooltip.
 
 ## Persistencia
 
-Um unico `config.json` em `app.getPath('userData')`
-(`~/.config/MultiTerm/config.json` no Linux), com tamanho/posicao da janela,
-layout escolhido e diretorios recentes. Escrita atomica, sem banco de dados.
+Dois arquivos em `app.getPath('userData')` (`~/.config/MultiTerm/` no Linux),
+ambos com escrita atomica, sem banco de dados:
+
+- `config.json`: tamanho/posicao da janela, layout escolhido, proporcoes das
+  divisorias de cada grade e diretorios recentes;
+- `notes.json`: as notas (titulo, texto e posicao na area livre).
+
 O historico dos terminais nao e persistido.
 
 ## Arquitetura
@@ -137,15 +194,17 @@ O historico dos terminais nao e persistido.
 src/
   domain/          regras e tipos, sem Electron e sem node-pty
     terminal/      TerminalSession (ciclo de vida, atividade, replay), porta Pty
-    workspace/     layouts e formato do config.json
+    workspace/     layouts (templates, divisorias) e formato do config.json
+    notes/         formato e validacao das notas
   application/     casos de uso (orquestram o dominio)
     terminal/      TerminalService — unico dono do conjunto de sessoes
     workspace/     WorkspaceService — preferencias, com save debounced
+    notes/         NotesService — notas, com save debounced
   infrastructure/  adaptadores concretos
     terminal/      NodePtyFactory implementa a porta Pty
-    persistence/   JsonConfigStore
+    persistence/   JsonConfigStore, JsonNotesStore (escrita atomica)
   main/            processo principal do Electron: janela + IPC + wiring
-  renderer/        UI (xterm, grade, toolbar, dialogo)
+  renderer/        UI: paineis (terminal, nota), grade, area livre, toolbar
   shared/          contrato de IPC tipado, compartilhado pelos tres bundles
   test/            teste de integracao do PTY
 ```

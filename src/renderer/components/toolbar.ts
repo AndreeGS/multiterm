@@ -1,9 +1,10 @@
-import { LAYOUTS, type LayoutId } from '../../domain/workspace/layout.js';
+import { gridTemplate, LAYOUTS, type LayoutId } from '../../domain/workspace/layout.js';
 import type { MultiTermApi } from '../../shared/contract.js';
 import { UsageBar } from './usage-bar.js';
 
 export interface ToolbarCallbacks {
   onNewTerminal(): void;
+  onNewNote(): void;
   onLayout(layout: LayoutId): void;
   onPage(delta: number): void;
   /** Pular para o proximo terminal que pediu atencao. */
@@ -32,6 +33,11 @@ export class Toolbar {
     newBtn.title = 'Novo terminal (Ctrl+T)';
     newBtn.addEventListener('click', () => this.callbacks.onNewTerminal());
 
+    const noteBtn = document.createElement('button');
+    noteBtn.textContent = '+ Nota';
+    noteBtn.title = 'Novo bloco de notas (Ctrl+Shift+N)';
+    noteBtn.addEventListener('click', () => this.callbacks.onNewNote());
+
     const layoutGroup = document.createElement('div');
     layoutGroup.className = 'group';
     const layoutLabel = document.createElement('span');
@@ -41,8 +47,8 @@ export class Toolbar {
     for (const layout of LAYOUTS) {
       const btn = document.createElement('button');
       btn.className = 'layout-btn';
-      btn.textContent = layout;
-      btn.title = `${layout} terminal(is) por tela`;
+      btn.append(layoutIcon(layout));
+      btn.title = LAYOUT_TITLES[layout];
       btn.addEventListener('click', () => this.callbacks.onLayout(layout));
       this.layoutButtons.set(layout, btn);
       layoutGroup.appendChild(btn);
@@ -66,6 +72,7 @@ export class Toolbar {
     this.element.append(
       brand,
       newBtn,
+      noteBtn,
       this.attentionBtn,
       spacer,
       usage.element,
@@ -95,6 +102,56 @@ export class Toolbar {
     this.prevBtn.disabled = page === 0;
     this.nextBtn.disabled = page >= pageCount - 1;
   }
+}
+
+const LAYOUT_TITLES: Record<LayoutId, string> = {
+  '1': '1 painel por tela',
+  '2': '2 paineis lado a lado',
+  '3': '3 paineis: 1 inteiro a esquerda, 2 empilhados a direita',
+  '4': '4 paineis (2x2)',
+  '6': '6 paineis (3x2)',
+  '8': '8 paineis (4x2)',
+  free: 'Area livre: arraste e redimensione os paineis a vontade',
+};
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** Miniatura do layout, desenhada a partir do mesmo template que a grade usa. */
+function layoutIcon(layout: LayoutId): SVGSVGElement {
+  const W = 20;
+  const H = 14;
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('width', String(W));
+  svg.setAttribute('height', String(H));
+  svg.classList.add('layout-icon');
+
+  const rect = (x: number, y: number, w: number, h: number) => {
+    const node = document.createElementNS(SVG_NS, 'rect');
+    for (const [key, value] of Object.entries({ x, y, width: w, height: h, rx: 1 })) {
+      node.setAttribute(key, String(value));
+    }
+    svg.append(node);
+  };
+
+  if (layout === 'free') {
+    rect(0.5, 0.5, 11, 8);
+    rect(8.5, 5.5, 11, 8);
+    return svg;
+  }
+  const { cols, rows, cells } = gridTemplate(layout);
+  const gap = 1.5;
+  const cw = (W - 1 - gap * (cols - 1)) / cols;
+  const ch = (H - 1 - gap * (rows - 1)) / rows;
+  for (const cell of cells) {
+    rect(
+      0.5 + cell.col * (cw + gap),
+      0.5 + cell.row * (ch + gap),
+      cw * cell.colSpan + gap * (cell.colSpan - 1),
+      ch * cell.rowSpan + gap * (cell.rowSpan - 1),
+    );
+  }
+  return svg;
 }
 
 function pagerButton(label: string, onClick: () => void): HTMLButtonElement {

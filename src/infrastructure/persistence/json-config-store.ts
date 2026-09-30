@@ -1,11 +1,8 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { type AppConfig, defaultConfig, parseConfig } from '../../domain/workspace/config.js';
+import { join } from 'node:path';
+import { type AppConfig, parseConfig } from '../../domain/workspace/config.js';
+import { readJson, writeJsonAtomic } from './atomic-json.js';
 
-/**
- * Persistencia em um unico config.json. Escrita atomica (tmp + rename) para
- * nao corromper o arquivo se o app for fechado durante o save.
- */
+/** Persistencia em um unico config.json, com escrita atomica. */
 export class JsonConfigStore {
   private readonly file: string;
 
@@ -18,19 +15,12 @@ export class JsonConfigStore {
   }
 
   load(): AppConfig {
-    try {
-      return parseConfig(JSON.parse(readFileSync(this.file, 'utf8')));
-    } catch {
-      return defaultConfig();
-    }
+    return parseConfig(readJson(this.file));
   }
 
   save(config: AppConfig): void {
     try {
-      mkdirSync(dirname(this.file), { recursive: true });
-      const tmp = `${this.file}.tmp`;
-      writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
-      renameSync(tmp, this.file);
+      writeJsonAtomic(this.file, config);
     } catch (error) {
       console.error('[config] falha ao salvar:', error);
     }

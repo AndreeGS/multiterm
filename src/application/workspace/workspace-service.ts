@@ -1,5 +1,5 @@
 import { type AppConfig, withRecentDir } from '../../domain/workspace/config.js';
-import type { LayoutId } from '../../domain/workspace/layout.js';
+import type { GridLayoutId, LayoutId, TrackSizes } from '../../domain/workspace/layout.js';
 import type { WindowBounds } from '../../domain/workspace/config.js';
 import type { JsonConfigStore } from '../../infrastructure/persistence/json-config-store.js';
 
@@ -24,6 +24,11 @@ export class WorkspaceService {
 
   setLayout(layout: LayoutId): void {
     this.config = { ...this.config, layout };
+    this.scheduleSave();
+  }
+
+  setLayoutSizes(layout: GridLayoutId, sizes: TrackSizes): void {
+    this.config = { ...this.config, layoutSizes: { ...this.config.layoutSizes, [layout]: sizes } };
     this.scheduleSave();
   }
 

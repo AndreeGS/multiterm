@@ -1,4 +1,12 @@
-import { DEFAULT_LAYOUT, isLayout, type LayoutId } from './layout.js';
+import {
+  DEFAULT_LAYOUT,
+  GRID_LAYOUTS,
+  isLayout,
+  parseTrackSizes,
+  type GridLayoutId,
+  type LayoutId,
+  type TrackSizes,
+} from './layout.js';
 
 export interface WindowBounds {
   x?: number;
@@ -7,9 +15,13 @@ export interface WindowBounds {
   height: number;
 }
 
+export type LayoutSizes = Partial<Record<GridLayoutId, TrackSizes>>;
+
 export interface AppConfig {
   window: WindowBounds;
   layout: LayoutId;
+  /** Proporcoes ajustadas pelo usuario em cada grade. Ausente = tudo igual. */
+  layoutSizes: LayoutSizes;
   /** Diretorios usados recentemente, mais recente primeiro. */
   recentDirs: string[];
 }
@@ -20,6 +32,7 @@ export function defaultConfig(): AppConfig {
   return {
     window: { width: 1400, height: 900 },
     layout: DEFAULT_LAYOUT,
+    layoutSizes: {},
     recentDirs: [],
   };
 }
@@ -39,6 +52,14 @@ export function parseConfig(raw: unknown): AppConfig {
   }
 
   if (isLayout(input.layout)) base.layout = input.layout;
+
+  const sizes = input.layoutSizes as Record<string, unknown> | undefined;
+  if (sizes && typeof sizes === 'object') {
+    for (const layout of GRID_LAYOUTS) {
+      const parsed = parseTrackSizes(layout, sizes[layout]);
+      if (parsed) base.layoutSizes[layout] = parsed;
+    }
+  }
 
   if (Array.isArray(input.recentDirs)) {
     base.recentDirs = input.recentDirs
