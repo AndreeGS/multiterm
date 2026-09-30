@@ -31,8 +31,7 @@ export interface PaneCallbacks {
 export class TerminalPane implements Panel {
   readonly element: HTMLElement;
   readonly header: HTMLElement;
-  /** Terminais nao sao persistidos, entao a posicao na area livre fica so em memoria. */
-  canvasRect: CanvasRect | null = null;
+  private rect: CanvasRect | null;
   private readonly term: Terminal;
   private readonly fit = new FitAddon();
   private readonly dot: HTMLElement;
@@ -48,8 +47,10 @@ export class TerminalPane implements Panel {
     snapshot: TerminalSnapshot,
     private readonly api: MultiTermApi,
     private readonly callbacks: PaneCallbacks,
+    rect: CanvasRect | null = null,
   ) {
     this.snapshot = snapshot;
+    this.rect = rect;
 
     this.element = el('div', 'pane');
     this.element.dataset.id = snapshot.id;
@@ -120,6 +121,16 @@ export class TerminalPane implements Panel {
 
   get id(): string {
     return this.snapshot.id;
+  }
+
+  get canvasRect(): CanvasRect | null {
+    return this.rect;
+  }
+
+  /** A area livre chama isto ao terminar de mover/redimensionar. */
+  set canvasRect(rect: CanvasRect | null) {
+    this.rect = rect;
+    this.api.setTerminalRect(this.id, rect);
   }
 
   update(snapshot: TerminalSnapshot): void {

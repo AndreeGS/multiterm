@@ -299,6 +299,11 @@ body.dragging .drag-handle { cursor: grabbing; }
 }
 .attention-btn:hover:not(:disabled) { background: #2a2416; border-color: var(--idle); }
 
+.restore-btn {
+  border-color: var(--border-active);
+  color: var(--accent);
+}
+
 .pane-header {
   display: flex;
   align-items: center;

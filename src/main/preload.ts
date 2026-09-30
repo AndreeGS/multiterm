@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type { TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js';
 import type { UsageSummary } from '../domain/usage/types.js';
 import type { NotePatch } from '../domain/notes/note.js';
-import type { GridLayoutId, LayoutId, TrackSizes } from '../domain/workspace/layout.js';
+import type { CanvasRect, CanvasView, GridLayoutId, LayoutId, TrackSizes } from '../domain/workspace/layout.js';
 import { CHANNELS, type BootstrapState, type MultiTermApi } from '../shared/contract.js';
 
 /** Inscreve um canal e devolve a funcao de cancelamento. */
@@ -29,9 +29,13 @@ const api: MultiTermApi = {
   acknowledgeTerminal: (id) => ipcRenderer.send(CHANNELS.acknowledge, id),
   writeTerminal: (id, data) => ipcRenderer.send(CHANNELS.write, id, data),
   resizeTerminal: (id, cols, rows) => ipcRenderer.send(CHANNELS.resize, id, cols, rows),
+  setTerminalRect: (id, rect: CanvasRect | null) => ipcRenderer.send(CHANNELS.setRect, id, rect),
+  restoreSession: () => ipcRenderer.invoke(CHANNELS.sessionRestore),
+  discardSession: () => ipcRenderer.invoke(CHANNELS.sessionDiscard),
   setLayout: (layout: LayoutId) => ipcRenderer.send(CHANNELS.setLayout, layout),
   setLayoutSizes: (layout: GridLayoutId, sizes: TrackSizes) =>
     ipcRenderer.send(CHANNELS.setLayoutSizes, layout, sizes),
+  setCanvasView: (view: CanvasView) => ipcRenderer.send(CHANNELS.setCanvasView, view),
 
   createNote: () => ipcRenderer.invoke(CHANNELS.noteCreate),
   updateNote: (id: string, patch: NotePatch) => ipcRenderer.send(CHANNELS.noteUpdate, id, patch),

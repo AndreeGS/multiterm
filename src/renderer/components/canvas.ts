@@ -36,7 +36,8 @@ export class CanvasBoard implements Board {
   private topZ = 1;
   private cascade = 0;
 
-  constructor() {
+  /** `onViewChange` recebe cada mudanca de pan/zoom, para persistir. */
+  constructor(private readonly onViewChange: (view: CanvasView) => void = () => {}) {
     this.zoomLabel = button('100%', 'Voltar para 100%', () => this.zoomBy(1 / this.view.zoom));
     this.zoomLabel.className = 'zoom-label';
     this.zoomBar.append(
@@ -62,7 +63,13 @@ export class CanvasBoard implements Board {
     });
     this.element.addEventListener('wheel', (event) => this.onWheel(event), { passive: false });
 
-    this.setView(this.view);
+    // Sem avisar: persistiria a vista padrao antes de a salva ser restaurada.
+    this.setView(this.view, false);
+  }
+
+  /** Vista salva da sessao anterior. */
+  restoreView(view: CanvasView): void {
+    this.setView(view, false);
   }
 
   get currentPage(): number {
@@ -163,7 +170,7 @@ export class CanvasBoard implements Board {
     this.setView(fitView(rects, this.element.clientWidth, this.element.clientHeight));
   }
 
-  private setView(view: CanvasView): void {
+  private setView(view: CanvasView, notify = true): void {
     const zoomChanged = view.zoom !== this.view.zoom;
     this.view = { ...view, zoom: clampZoom(view.zoom) };
     const { x, y, zoom } = this.view;
@@ -172,6 +179,7 @@ export class CanvasBoard implements Board {
     this.element.style.backgroundPosition = `${x}px ${y}px`;
     this.element.style.backgroundSize = `${DOT_SPACING * zoom}px ${DOT_SPACING * zoom}px`;
     this.zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
+    if (notify) this.onViewChange(this.view);
     if (!zoomChanged) return;
     // Varios eventos de roda por frame viram uma unica troca de fonte por painel.
     if (!this.pendingFrame) {

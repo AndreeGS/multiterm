@@ -103,8 +103,14 @@ multiplicados pelo zoom e cada painel ajusta a propria fonte. Selecao e clique
 no terminal continuam precisos em qualquer zoom, e como fonte e painel escalam
 juntos, o numero de colunas/linhas do shell praticamente nao muda.
 
-A posicao das notas na area livre e salva; a dos terminais vale so para a
-sessao, como os proprios terminais.
+A posicao das notas e dos terminais na area livre e salva, assim como o pan e
+o zoom da vista.
+
+Ao abrir o app, se havia terminais na sessao anterior, aparece o botao
+**⟲ Restaurar sessao (N)** na barra: ele reabre cada terminal com o mesmo nome,
+diretorio, shell e posicao — mas com um shell novo, os processos nao
+sobrevivem ao fechamento. O ✕ ao lado descarta a sessao. Enquanto voce nao
+escolher, ela continua guardada.
 
 ## Bloco de notas
 
@@ -183,10 +189,11 @@ Dois arquivos em `app.getPath('userData')` (`~/.config/MultiTerm/` no Linux),
 ambos com escrita atomica, sem banco de dados:
 
 - `config.json`: tamanho/posicao da janela, layout escolhido, proporcoes das
-  divisorias de cada grade e diretorios recentes;
+  divisorias de cada grade, diretorios recentes, terminais abertos (nome,
+  diretorio, shell, posicao) e a vista da area livre;
 - `notes.json`: as notas (titulo, texto e posicao na area livre).
 
-O historico dos terminais nao e persistido.
+O historico (scrollback) e os processos dos terminais nao sao persistidos.
 
 ## Arquitetura
 
@@ -222,7 +229,6 @@ Regras que mantem o acoplamento baixo:
 
 - Atividade mais precisa lendo o processo em foreground do PTY
   (`IPty.process` no Unix) em vez de so o fluxo de bytes.
-- Reabrir os terminais da sessao anterior a partir do `config.json`.
 - Comando inicial opcional por terminal (ex.: ja subir `claude` ao criar).
 - Rotear o output por um `Map<id, painel>` em vez de cada painel filtrar todos
   os chunks, e agrupar os `webContents.send` em janelas de ~16ms.

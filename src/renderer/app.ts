@@ -1,6 +1,6 @@
 import type { Note } from '../domain/notes/note.js';
 import type { TerminalSnapshot } from '../domain/terminal/types.js';
-import { capacity, isGridLayout, layoutFor, type LayoutId } from '../domain/workspace/layout.js';
+import { capacity, isGridLayout, layoutFor, type CanvasRect, type LayoutId } from '../domain/workspace/layout.js';
 import type { MultiTermApi } from '../shared/contract.js';
 import { CanvasBoard } from './components/canvas.js';
 import { TerminalGrid } from './components/grid.js';
@@ -20,7 +20,7 @@ export class App {
   private readonly order: string[] = [];
   private readonly toolbar: Toolbar;
   private readonly grid: TerminalGrid;
-  private readonly canvas = new CanvasBoard();
+  private readonly canvas: CanvasBoard;
   private readonly emptyState = document.createElement('div');
   private layout: LayoutId;
   private recentDirs: string[] = [];
@@ -35,12 +35,15 @@ export class App {
     layout: LayoutId,
   ) {
     this.layout = layout;
+    this.canvas = new CanvasBoard((view) => this.api.setCanvasView(view));
     this.toolbar = new Toolbar({
       onNewTerminal: () => void this.promptNewTerminal(),
       onNewNote: () => void this.createNote(),
       onLayout: (next) => this.setLayout(next),
       onPage: (delta) => this.board.setPage(this.board.currentPage + delta),
       onNextAttention: () => this.goToNextAttention(),
+      onRestoreSession: () => void this.restoreSession(),
+      onDiscardSession: () => void this.discardSession(),
     }, api);
 
     this.grid = new TerminalGrid(
@@ -74,12 +77,30 @@ export class App {
     this.defaultDir = state.defaultDir;
     setHomeDir(state.homeDir);
     this.grid.setSizes(state.layoutSizes);
+    if (state.canvasView) this.canvas.restoreView(state.canvasView);
     for (const note of state.notes) this.addNote(note);
     for (const snapshot of state.terminals) {
-      this.addTerminal(snapshot);
+      this.addTerminal(snapshot, state.terminalRects[snapshot.id] ?? null);
       this.trackAttention(snapshot);
     }
+    this.toolbar.setPendingSession(state.pendingSession.map((t) => t.name || t.cwd));
     this.applyLayout(state.layout);
+  }
+
+  private async restoreSession(): Promise<void> {
+    this.toolbar.setPendingSession([]);
+    const { terminals, terminalRects } = await this.api.restoreSession();
+    if (terminals.length === 0) return;
+    for (const snapshot of terminals) this.addTerminal(snapshot, terminalRects[snapshot.id] ?? null);
+    const needed = layoutFor(this.order.length);
+    if (isGridLayout(this.layout) && capacity(needed) > capacity(this.layout)) this.setLayout(needed);
+    this.sync();
+    this.focus(terminals[0]!.id);
+  }
+
+  private async discardSession(): Promise<void> {
+    this.toolbar.setPendingSession([]);
+    await this.api.discardSession();
   }
 
   private bindGlobalEvents(): void {
@@ -222,8 +243,8 @@ export class App {
     }
   }
 
-  private addTerminal(snapshot: TerminalSnapshot): void {
-    this.addPane(new TerminalPane(snapshot, this.api, this.paneCallbacks()));
+  private addTerminal(snapshot: TerminalSnapshot, rect: CanvasRect | null = null): void {
+    this.addPane(new TerminalPane(snapshot, this.api, this.paneCallbacks(), rect));
   }
 
   private addNote(note: Note): void {

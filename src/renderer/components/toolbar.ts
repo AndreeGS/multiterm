@@ -9,6 +9,8 @@ export interface ToolbarCallbacks {
   onPage(delta: number): void;
   /** Pular para o proximo terminal que pediu atencao. */
   onNextAttention(): void;
+  onRestoreSession(): void;
+  onDiscardSession(): void;
 }
 
 export class Toolbar {
@@ -19,6 +21,8 @@ export class Toolbar {
   private readonly prevBtn: HTMLButtonElement;
   private readonly nextBtn: HTMLButtonElement;
   private readonly attentionBtn = document.createElement('button');
+  private readonly sessionGroup = document.createElement('div');
+  private readonly restoreBtn = document.createElement('button');
 
   constructor(private readonly callbacks: ToolbarCallbacks, api: MultiTermApi) {
     this.element.className = 'toolbar';
@@ -64,6 +68,16 @@ export class Toolbar {
     this.attentionBtn.hidden = true;
     this.attentionBtn.addEventListener('click', () => this.callbacks.onNextAttention());
 
+    this.sessionGroup.className = 'group session-group';
+    this.sessionGroup.hidden = true;
+    this.restoreBtn.className = 'restore-btn';
+    this.restoreBtn.addEventListener('click', () => this.callbacks.onRestoreSession());
+    const discardBtn = document.createElement('button');
+    discardBtn.textContent = '✕';
+    discardBtn.title = 'Descartar a sessao anterior';
+    discardBtn.addEventListener('click', () => this.callbacks.onDiscardSession());
+    this.sessionGroup.append(this.restoreBtn, discardBtn);
+
     const spacer = document.createElement('div');
     spacer.className = 'spacer';
 
@@ -74,6 +88,7 @@ export class Toolbar {
       newBtn,
       noteBtn,
       this.attentionBtn,
+      this.sessionGroup,
       spacer,
       usage.element,
       this.pageGroup,
@@ -94,6 +109,13 @@ export class Toolbar {
       count === 1
         ? 'Um terminal terminou e esta aguardando voce. Clique para ir ate ele.'
         : `${count} terminais terminaram e estao aguardando voce. Clique para percorre-los.`;
+  }
+
+  /** Terminais da sessao anterior esperando restauracao (vazio esconde). */
+  setPendingSession(names: string[]): void {
+    this.sessionGroup.hidden = names.length === 0;
+    this.restoreBtn.textContent = `⟲ Restaurar sessao (${names.length})`;
+    this.restoreBtn.title = `Reabre nas mesmas posicoes, com shells novos:\n${names.join('\n')}`;
   }
 
   setPaging(page: number, pageCount: number): void {

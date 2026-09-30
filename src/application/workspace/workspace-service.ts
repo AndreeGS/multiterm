@@ -1,12 +1,13 @@
 import { type AppConfig, withRecentDir } from '../../domain/workspace/config.js';
-import type { GridLayoutId, LayoutId, TrackSizes } from '../../domain/workspace/layout.js';
-import type { WindowBounds } from '../../domain/workspace/config.js';
+import type { CanvasView, GridLayoutId, LayoutId, TrackSizes } from '../../domain/workspace/layout.js';
+import type { SavedTerminal, WindowBounds } from '../../domain/workspace/config.js';
 import type { JsonConfigStore } from '../../infrastructure/persistence/json-config-store.js';
 
 const SAVE_DEBOUNCE_MS = 400;
 
 /**
- * Caso de uso: preferencias do workspace (layout, janela, diretorios recentes).
+ * Caso de uso: preferencias do workspace (layout, janela, diretorios recentes,
+ * terminais abertos e vista da area livre).
  * Mantem o estado em memoria e persiste com debounce para nao escrever no disco
  * a cada pixel de resize.
  */
@@ -34,6 +35,18 @@ export class WorkspaceService {
 
   setWindowBounds(window: WindowBounds): void {
     this.config = { ...this.config, window };
+    this.scheduleSave();
+  }
+
+  setCanvasView(canvasView: CanvasView): void {
+    this.config = { ...this.config, canvasView };
+    this.scheduleSave();
+  }
+
+  /** Chamado a cada update de terminal; so grava se algo relevante mudou. */
+  setTerminals(terminals: SavedTerminal[]): void {
+    if (JSON.stringify(terminals) === JSON.stringify(this.config.terminals)) return;
+    this.config = { ...this.config, terminals };
     this.scheduleSave();
   }
 

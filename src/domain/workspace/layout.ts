@@ -207,6 +207,13 @@ export interface CanvasView {
   readonly zoom: number;
 }
 
+export function parseCanvasView(raw: unknown): CanvasView | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const { x, y, zoom } = raw as Record<string, unknown>;
+  if (![x, y, zoom].every((v) => typeof v === 'number' && Number.isFinite(v))) return null;
+  return { x: x as number, y: y as number, zoom: clampZoom(zoom as number) };
+}
+
 /**
  * Muda o zoom mantendo parado o ponto do mundo que esta sob (sx, sy) na tela
  * — o cursor, ou o centro da vista.

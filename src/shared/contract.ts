@@ -5,8 +5,8 @@
 import type { TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js';
 import type { UsageSummary } from '../domain/usage/types.js';
 import type { Note, NotePatch } from '../domain/notes/note.js';
-import type { LayoutSizes } from '../domain/workspace/config.js';
-import type { GridLayoutId, LayoutId, TrackSizes } from '../domain/workspace/layout.js';
+import type { LayoutSizes, SavedTerminal } from '../domain/workspace/config.js';
+import type { CanvasRect, CanvasView, GridLayoutId, LayoutId, TrackSizes } from '../domain/workspace/layout.js';
 
 export interface BootstrapState {
   readonly layout: LayoutId;
@@ -14,9 +14,19 @@ export interface BootstrapState {
   readonly notes: Note[];
   readonly recentDirs: string[];
   readonly terminals: TerminalSnapshot[];
+  /** Posicao de cada terminal na area livre, por id. */
+  readonly terminalRects: Record<string, CanvasRect>;
+  readonly canvasView: CanvasView | null;
+  /** Terminais da sessao anterior, esperando o usuario restaurar ou descartar. */
+  readonly pendingSession: SavedTerminal[];
   readonly defaultDir: string;
   readonly homeDir: string;
   readonly configPath: string;
+}
+
+export interface RestoredSession {
+  readonly terminals: TerminalSnapshot[];
+  readonly terminalRects: Record<string, CanvasRect>;
 }
 
 export interface MultiTermApi {
@@ -35,10 +45,18 @@ export interface MultiTermApi {
   resizeTerminal(id: string, cols: number, rows: number): void;
   /** Output retido, para preencher o xterm ao anexar. */
   replayTerminal(id: string): Promise<string>;
+  /** Persiste a posicao do terminal na area livre. */
+  setTerminalRect(id: string, rect: CanvasRect | null): void;
+
+  /** Sobe de novo os terminais da sessao anterior, nas mesmas posicoes. */
+  restoreSession(): Promise<RestoredSession>;
+  discardSession(): Promise<void>;
 
   setLayout(layout: LayoutId): void;
   /** Persiste as proporcoes de uma grade depois de arrastar um divisor. */
   setLayoutSizes(layout: GridLayoutId, sizes: TrackSizes): void;
+  /** Persiste pan/zoom da area livre (o main agrupa as escritas). */
+  setCanvasView(view: CanvasView): void;
 
   createNote(): Promise<Note>;
   /** Fire-and-forget: chamado a cada tecla; o main agrupa as escritas. */
@@ -60,6 +78,9 @@ export const CHANNELS = {
   pickDirectory: 'app:pick-directory',
   setLayout: 'workspace:set-layout',
   setLayoutSizes: 'workspace:set-layout-sizes',
+  setCanvasView: 'workspace:set-canvas-view',
+  sessionRestore: 'session:restore',
+  sessionDiscard: 'session:discard',
 
   noteCreate: 'note:create',
   noteUpdate: 'note:update',
@@ -78,6 +99,7 @@ export const CHANNELS = {
   write: 'terminal:write',
   resize: 'terminal:resize',
   replay: 'terminal:replay',
+  setRect: 'terminal:set-rect',
 
   data: 'terminal:data',
   update: 'terminal:update',
