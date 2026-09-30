@@ -1,22 +1,28 @@
+import type { Note } from '../domain/notes/note.js';
 import type { TerminalSnapshot } from '../domain/terminal/types.js';
-import { layoutFor, type LayoutId } from '../domain/workspace/layout.js';
+import { capacity, isGridLayout, layoutFor, type CanvasRect, type LayoutId } from '../domain/workspace/layout.js';
 import type { MultiTermApi } from '../shared/contract.js';
+import { CanvasBoard } from './components/canvas.js';
 import { TerminalGrid } from './components/grid.js';
 import { openNewTerminalDialog } from './components/new-terminal-dialog.js';
+import { NotePane } from './components/note-pane.js';
+import type { Board, Panel } from './components/panel.js';
 import { TerminalPane } from './components/terminal-pane.js';
 import { Toolbar } from './components/toolbar.js';
 import { setHomeDir } from './paths.js';
 
 /**
- * Orquestra a UI: mantem a lista de paineis em sincronia com as sessoes do main
- * e repassa acoes do usuario para a API exposta pelo preload.
+ * Orquestra a UI: mantem a lista de paineis (terminais e notas) em sincronia
+ * com o main e repassa acoes do usuario para a API exposta pelo preload.
  */
 export class App {
-  private readonly panes = new Map<string, TerminalPane>();
+  private readonly panes = new Map<string, Panel>();
   private readonly order: string[] = [];
   private readonly toolbar: Toolbar;
   private readonly grid: TerminalGrid;
+  private readonly canvas: CanvasBoard;
   private readonly emptyState = document.createElement('div');
+  private layout: LayoutId;
   private recentDirs: string[] = [];
   private defaultDir = '';
   private focusedId: string | null = null;
@@ -28,23 +34,31 @@ export class App {
     private readonly api: MultiTermApi,
     layout: LayoutId,
   ) {
+    this.layout = layout;
+    this.canvas = new CanvasBoard((view) => this.api.setCanvasView(view));
     this.toolbar = new Toolbar({
       onNewTerminal: () => void this.promptNewTerminal(),
+      onNewNote: () => void this.createNote(),
       onLayout: (next) => this.setLayout(next),
-      onPage: (delta) => this.grid.setPage(this.grid.currentPage + delta),
+      onPage: (delta) => this.board.setPage(this.board.currentPage + delta),
       onNextAttention: () => this.goToNextAttention(),
+      onRestoreSession: () => void this.restoreSession(),
+      onDiscardSession: () => void this.discardSession(),
     }, api);
 
-    this.grid = new TerminalGrid(layout, () => {
-      this.toolbar.setPaging(this.grid.currentPage, this.grid.pageCount);
-    });
+    this.grid = new TerminalGrid(
+      isGridLayout(layout) ? layout : '4',
+      () => this.updatePaging(),
+      (gridLayout, sizes) => this.api.setLayoutSizes(gridLayout, sizes),
+    );
 
     const wrap = document.createElement('div');
     wrap.className = 'grid-wrap';
     this.emptyState.className = 'empty';
     this.emptyState.innerHTML =
-      '<div>Nenhum terminal aberto.</div><div><kbd>Ctrl</kbd>+<kbd>T</kbd> para criar o primeiro.</div>';
-    wrap.append(this.emptyState, this.grid.element);
+      '<div>Nada aberto ainda.</div>' +
+      '<div><kbd>Ctrl</kbd>+<kbd>T</kbd> novo terminal · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> nova nota</div>';
+    wrap.append(this.emptyState, this.grid.element, this.canvas.element);
 
     this.root.append(this.toolbar.element, wrap);
     this.toolbar.setLayout(layout);
@@ -52,22 +66,47 @@ export class App {
     this.bindGlobalEvents();
   }
 
+  /** A grade ou a area livre, conforme o layout escolhido. */
+  private get board(): Board {
+    return this.layout === 'free' ? this.canvas : this.grid;
+  }
+
   async start(): Promise<void> {
     const state = await this.api.bootstrap();
     this.recentDirs = state.recentDirs;
     this.defaultDir = state.defaultDir;
     setHomeDir(state.homeDir);
-    this.applyLayout(state.layout);
+    this.grid.setSizes(state.layoutSizes);
+    if (state.canvasView) this.canvas.restoreView(state.canvasView);
+    for (const note of state.notes) this.addNote(note);
     for (const snapshot of state.terminals) {
-      this.addPane(snapshot);
+      this.addTerminal(snapshot, state.terminalRects[snapshot.id] ?? null);
       this.trackAttention(snapshot);
     }
+    this.toolbar.setPendingSession(state.pendingSession.map((t) => t.name || t.cwd));
+    this.applyLayout(state.layout);
+  }
+
+  private async restoreSession(): Promise<void> {
+    this.toolbar.setPendingSession([]);
+    const { terminals, terminalRects } = await this.api.restoreSession();
+    if (terminals.length === 0) return;
+    for (const snapshot of terminals) this.addTerminal(snapshot, terminalRects[snapshot.id] ?? null);
+    const needed = layoutFor(this.order.length);
+    if (isGridLayout(this.layout) && capacity(needed) > capacity(this.layout)) this.setLayout(needed);
     this.sync();
+    this.focus(terminals[0]!.id);
+  }
+
+  private async discardSession(): Promise<void> {
+    this.toolbar.setPendingSession([]);
+    await this.api.discardSession();
   }
 
   private bindGlobalEvents(): void {
     this.api.onTerminalUpdate((snapshot) => {
-      this.panes.get(snapshot.id)?.update(snapshot);
+      const pane = this.panes.get(snapshot.id);
+      if (pane instanceof TerminalPane) pane.update(snapshot);
       this.trackAttention(snapshot);
     });
     this.api.onTerminalClose((id) => this.removePane(id));
@@ -78,7 +117,7 @@ export class App {
     });
 
     window.addEventListener('resize', () => {
-      for (const pane of this.grid.visiblePanes()) pane.refit();
+      for (const pane of this.board.visiblePanes()) pane.refit();
     });
 
     window.addEventListener('keydown', (event) => {
@@ -95,14 +134,19 @@ export class App {
         void this.promptNewTerminal();
         return;
       }
+      if (event.shiftKey && key === 'n') {
+        event.preventDefault();
+        void this.createNote();
+        return;
+      }
       if (event.shiftKey && key === 'w' && this.focusedId) {
         event.preventDefault();
-        void this.api.closeTerminal(this.focusedId);
+        void this.closePane(this.focusedId);
         return;
       }
       if (event.shiftKey && key === 'm' && this.focusedId) {
         event.preventDefault();
-        this.grid.toggleMaximize(this.focusedId);
+        this.board.toggleMaximize(this.focusedId);
       }
     });
   }
@@ -113,7 +157,7 @@ export class App {
    */
   private isTypingInTerminal(event: KeyboardEvent): boolean {
     const target = event.target as HTMLElement | null;
-    return Boolean(target?.closest('.pane-body'));
+    return Boolean(target?.closest('.pane-body:not(.note-body)'));
   }
 
   private async promptNewTerminal(): Promise<void> {
@@ -124,15 +168,39 @@ export class App {
       if (!spec) return;
       const snapshot = await this.api.createTerminal(spec);
       this.rememberDir(snapshot.cwd);
-      this.addPane(snapshot);
-      // Cresce o layout automaticamente ate caber, sem passar do escolhido.
-      const needed = layoutFor(this.order.length);
-      if (Number(needed) > Number(this.grid.currentLayout)) this.setLayout(needed);
-      this.sync();
-      this.focus(snapshot.id);
+      this.addTerminal(snapshot);
+      this.showNew(snapshot.id);
     } finally {
       this.dialogOpen = false;
     }
+  }
+
+  private async createNote(): Promise<void> {
+    const note = await this.api.createNote();
+    this.addNote(note);
+    this.showNew(note.id);
+  }
+
+  /** Exibe um painel recem-criado e da foco a ele. */
+  private showNew(id: string): void {
+    // Cresce a grade automaticamente ate caber, sem passar do escolhido.
+    const needed = layoutFor(this.order.length);
+    if (isGridLayout(this.layout) && capacity(needed) > capacity(this.layout)) this.setLayout(needed);
+    this.sync();
+    this.board.revealPane(id);
+    this.focus(id);
+  }
+
+  /** Nota com conteudo pede confirmacao: fechar apaga de vez. */
+  private async closePane(id: string): Promise<void> {
+    const pane = this.panes.get(id);
+    if (pane instanceof NotePane) {
+      if (!pane.isEmpty && !window.confirm('Fechar esta nota apaga o conteudo dela. Continuar?')) return;
+      await this.api.deleteNote(id);
+      this.removePane(id);
+      return;
+    }
+    await this.api.closeTerminal(id);
   }
 
   /**
@@ -156,6 +224,7 @@ export class App {
   }
 
   private acknowledge(id: string): void {
+    if (!(this.panes.get(id) instanceof TerminalPane)) return;
     // Sempre avisa o main: o contador da UI e o estado da sessao podem estar
     // dessincronizados, e do lado de la o acknowledge e no-op quando nao ha nada.
     this.api.acknowledgeTerminal(id);
@@ -168,23 +237,34 @@ export class App {
     for (let i = 0; i < this.order.length; i += 1) {
       const id = this.order[(start + i) % this.order.length]!;
       if (!this.attention.has(id)) continue;
-      this.grid.revealPane(id);
+      this.board.revealPane(id);
       this.focus(id);
       return;
     }
   }
 
-  private addPane(snapshot: TerminalSnapshot): void {
-    const pane = new TerminalPane(snapshot, this.api, {
-      onFocus: (id) => this.focus(id),
-      onClose: (id) => void this.api.closeTerminal(id),
-      onMaximize: (id) => {
-        this.grid.toggleMaximize(id);
+  private addTerminal(snapshot: TerminalSnapshot, rect: CanvasRect | null = null): void {
+    this.addPane(new TerminalPane(snapshot, this.api, this.paneCallbacks(), rect));
+  }
+
+  private addNote(note: Note): void {
+    this.addPane(new NotePane(note, this.api, this.paneCallbacks()));
+  }
+
+  private paneCallbacks() {
+    return {
+      onFocus: (id: string) => this.focus(id),
+      onClose: (id: string) => void this.closePane(id),
+      onMaximize: (id: string) => {
+        this.board.toggleMaximize(id);
         this.focus(id);
       },
-    });
-    this.panes.set(snapshot.id, pane);
-    this.order.push(snapshot.id);
+    };
+  }
+
+  private addPane(pane: Panel): void {
+    this.panes.set(pane.id, pane);
+    this.order.push(pane.id);
   }
 
   private removePane(id: string): void {
@@ -208,8 +288,14 @@ export class App {
   }
 
   private applyLayout(layout: LayoutId): void {
-    this.grid.setLayout(layout);
+    const previous = this.board;
+    this.layout = layout;
+    if (isGridLayout(layout)) this.grid.setLayout(layout);
+    // Trocar entre grade e area livre: quem sai solta os paineis antes.
+    if (previous !== this.board) previous.setPanes([]);
     this.toolbar.setLayout(layout);
+    this.sync();
+    if (this.focusedId) this.board.revealPane(this.focusedId);
   }
 
   private focus(id: string): void {
@@ -229,10 +315,17 @@ export class App {
     this.defaultDir = dir;
   }
 
+  private updatePaging(): void {
+    this.toolbar.setPaging(this.board.currentPage, this.board.pageCount);
+  }
+
   private sync(): void {
-    this.grid.setPanes(this.order.map((id) => this.panes.get(id)!).filter(Boolean));
     const hasPanes = this.order.length > 0;
     this.emptyState.hidden = hasPanes;
-    this.grid.element.hidden = !hasPanes;
+    // A area livre fica visivel mesmo vazia: o fundo e onde se trabalha.
+    this.grid.element.hidden = !hasPanes || this.board !== this.grid;
+    this.canvas.element.hidden = this.board !== this.canvas;
+    this.board.setPanes(this.order.map((id) => this.panes.get(id)!).filter(Boolean));
+    this.updatePaging();
   }
 }
