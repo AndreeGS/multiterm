@@ -2,7 +2,10 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 import type { TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js';
 import type { UsageSummary } from '../domain/usage/types.js';
 import type { NotePatch } from '../domain/notes/note.js';
+import type { CanvasTextPatch } from '../domain/canvas/text.js';
+import type { TaskListPatch } from '../domain/tasks/task-list.js';
 import type { CanvasRect, CanvasView, GridLayoutId, LayoutId, TrackSizes } from '../domain/workspace/layout.js';
+import type { Settings } from '../domain/workspace/settings.js';
 import { CHANNELS, type BootstrapState, type MultiTermApi } from '../shared/contract.js';
 
 /** Inscreve um canal e devolve a funcao de cancelamento. */
@@ -36,10 +39,19 @@ const api: MultiTermApi = {
   setLayoutSizes: (layout: GridLayoutId, sizes: TrackSizes) =>
     ipcRenderer.send(CHANNELS.setLayoutSizes, layout, sizes),
   setCanvasView: (view: CanvasView) => ipcRenderer.send(CHANNELS.setCanvasView, view),
+  setSettings: (settings: Settings) => ipcRenderer.send(CHANNELS.setSettings, settings),
 
   createNote: () => ipcRenderer.invoke(CHANNELS.noteCreate),
   updateNote: (id: string, patch: NotePatch) => ipcRenderer.send(CHANNELS.noteUpdate, id, patch),
   deleteNote: (id: string) => ipcRenderer.invoke(CHANNELS.noteDelete, id),
+
+  createTaskList: () => ipcRenderer.invoke(CHANNELS.taskListCreate),
+  updateTaskList: (id: string, patch: TaskListPatch) => ipcRenderer.send(CHANNELS.taskListUpdate, id, patch),
+  deleteTaskList: (id: string) => ipcRenderer.invoke(CHANNELS.taskListDelete, id),
+
+  createText: (x: number, y: number) => ipcRenderer.invoke(CHANNELS.textCreate, x, y),
+  updateText: (id: string, patch: CanvasTextPatch) => ipcRenderer.send(CHANNELS.textUpdate, id, patch),
+  deleteText: (id: string) => ipcRenderer.invoke(CHANNELS.textDelete, id),
 
   getUsage: () => ipcRenderer.invoke(CHANNELS.usageGet) as Promise<UsageSummary>,
   refreshUsage: () => ipcRenderer.send(CHANNELS.usageRefresh),

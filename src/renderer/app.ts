@@ -1,18 +1,23 @@
 import type { Note } from '../domain/notes/note.js';
+import type { TaskList } from '../domain/tasks/task-list.js';
 import type { TerminalSnapshot } from '../domain/terminal/types.js';
 import { capacity, isGridLayout, layoutFor, type CanvasRect, type LayoutId } from '../domain/workspace/layout.js';
+import { defaultSettings, type Settings } from '../domain/workspace/settings.js';
 import type { MultiTermApi } from '../shared/contract.js';
 import { CanvasBoard } from './components/canvas.js';
 import { TerminalGrid } from './components/grid.js';
 import { openNewTerminalDialog } from './components/new-terminal-dialog.js';
 import { NotePane } from './components/note-pane.js';
+import { openSettingsDialog } from './components/settings-dialog.js';
 import type { Board, Panel } from './components/panel.js';
+import { TaskPane } from './components/task-pane.js';
 import { TerminalPane } from './components/terminal-pane.js';
 import { Toolbar } from './components/toolbar.js';
 import { setHomeDir } from './paths.js';
+import { applyDocumentSettings } from './theme.js';
 
 /**
- * Orquestra a UI: mantem a lista de paineis (terminais e notas) em sincronia
+ * Orquestra a UI: mantem a lista de paineis (terminais, notas e tarefas) em sincronia
  * com o main e repassa acoes do usuario para a API exposta pelo preload.
  */
 export class App {
@@ -28,6 +33,7 @@ export class App {
   private focusedId: string | null = null;
   private readonly attention = new Set<string>();
   private dialogOpen = false;
+  private settings: Settings = defaultSettings();
 
   constructor(
     private readonly root: HTMLElement,
@@ -35,15 +41,21 @@ export class App {
     layout: LayoutId,
   ) {
     this.layout = layout;
-    this.canvas = new CanvasBoard((view) => this.api.setCanvasView(view));
+    this.canvas = new CanvasBoard((view) => this.api.setCanvasView(view), {
+      create: (x, y) => this.api.createText(x, y),
+      update: (id, patch) => this.api.updateText(id, patch),
+      remove: (id) => void this.api.deleteText(id),
+    });
     this.toolbar = new Toolbar({
       onNewTerminal: () => void this.promptNewTerminal(),
       onNewNote: () => void this.createNote(),
+      onNewTaskList: () => void this.createTaskList(),
       onLayout: (next) => this.setLayout(next),
       onPage: (delta) => this.board.setPage(this.board.currentPage + delta),
       onNextAttention: () => this.goToNextAttention(),
       onRestoreSession: () => void this.restoreSession(),
       onDiscardSession: () => void this.discardSession(),
+      onSettings: () => void this.openSettings(),
     }, api);
 
     this.grid = new TerminalGrid(
@@ -57,7 +69,7 @@ export class App {
     this.emptyState.className = 'empty';
     this.emptyState.innerHTML =
       '<div>Nada aberto ainda.</div>' +
-      '<div><kbd>Ctrl</kbd>+<kbd>T</kbd> novo terminal · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> nova nota</div>';
+      '<div><kbd>Ctrl</kbd>+<kbd>T</kbd> novo terminal · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> nova nota · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> nova lista de tarefas</div>';
     wrap.append(this.emptyState, this.grid.element, this.canvas.element);
 
     this.root.append(this.toolbar.element, wrap);
@@ -73,12 +85,16 @@ export class App {
 
   async start(): Promise<void> {
     const state = await this.api.bootstrap();
+    this.settings = state.settings;
+    applyDocumentSettings(this.settings);
     this.recentDirs = state.recentDirs;
     this.defaultDir = state.defaultDir;
     setHomeDir(state.homeDir);
     this.grid.setSizes(state.layoutSizes);
     if (state.canvasView) this.canvas.restoreView(state.canvasView);
+    this.canvas.setTexts(state.texts);
     for (const note of state.notes) this.addNote(note);
+    for (const list of state.taskLists) this.addTaskList(list);
     for (const snapshot of state.terminals) {
       this.addTerminal(snapshot, state.terminalRects[snapshot.id] ?? null);
       this.trackAttention(snapshot);
@@ -134,9 +150,19 @@ export class App {
         void this.promptNewTerminal();
         return;
       }
+      if (!event.shiftKey && key === ',') {
+        event.preventDefault();
+        void this.openSettings();
+        return;
+      }
       if (event.shiftKey && key === 'n') {
         event.preventDefault();
         void this.createNote();
+        return;
+      }
+      if (event.shiftKey && key === 'l') {
+        event.preventDefault();
+        void this.createTaskList();
         return;
       }
       if (event.shiftKey && key === 'w' && this.focusedId) {
@@ -157,7 +183,7 @@ export class App {
    */
   private isTypingInTerminal(event: KeyboardEvent): boolean {
     const target = event.target as HTMLElement | null;
-    return Boolean(target?.closest('.pane-body:not(.note-body)'));
+    return Boolean(target?.closest('.pane-body:not(.note-body):not(.tasks-body)'));
   }
 
   private async promptNewTerminal(): Promise<void> {
@@ -175,10 +201,35 @@ export class App {
     }
   }
 
+  private async openSettings(): Promise<void> {
+    if (this.dialogOpen) return;
+    this.dialogOpen = true;
+    try {
+      await openSettingsDialog(this.settings, (settings) => this.applySettings(settings));
+    } finally {
+      this.dialogOpen = false;
+      if (this.focusedId) this.panes.get(this.focusedId)?.focus();
+    }
+  }
+
+  private applySettings(settings: Settings): void {
+    this.settings = settings;
+    applyDocumentSettings(settings);
+    // Cabecalhos mudam de altura com a escala; o ResizeObserver de cada terminal refaz o fit.
+    for (const pane of this.panes.values()) pane.setAppearance(settings);
+    this.api.setSettings(settings);
+  }
+
   private async createNote(): Promise<void> {
     const note = await this.api.createNote();
     this.addNote(note);
     this.showNew(note.id);
+  }
+
+  private async createTaskList(): Promise<void> {
+    const list = await this.api.createTaskList();
+    this.addTaskList(list);
+    this.showNew(list.id);
   }
 
   /** Exibe um painel recem-criado e da foco a ele. */
@@ -191,12 +242,18 @@ export class App {
     this.focus(id);
   }
 
-  /** Nota com conteudo pede confirmacao: fechar apaga de vez. */
+  /** Nota ou lista com conteudo pede confirmacao: fechar apaga de vez. */
   private async closePane(id: string): Promise<void> {
     const pane = this.panes.get(id);
     if (pane instanceof NotePane) {
       if (!pane.isEmpty && !window.confirm('Fechar esta nota apaga o conteudo dela. Continuar?')) return;
       await this.api.deleteNote(id);
+      this.removePane(id);
+      return;
+    }
+    if (pane instanceof TaskPane) {
+      if (!pane.isEmpty && !window.confirm('Fechar esta lista apaga todas as tarefas dela. Continuar?')) return;
+      await this.api.deleteTaskList(id);
       this.removePane(id);
       return;
     }
@@ -244,11 +301,15 @@ export class App {
   }
 
   private addTerminal(snapshot: TerminalSnapshot, rect: CanvasRect | null = null): void {
-    this.addPane(new TerminalPane(snapshot, this.api, this.paneCallbacks(), rect));
+    this.addPane(new TerminalPane(snapshot, this.api, this.paneCallbacks(), this.settings, rect));
   }
 
   private addNote(note: Note): void {
-    this.addPane(new NotePane(note, this.api, this.paneCallbacks()));
+    this.addPane(new NotePane(note, this.api, this.paneCallbacks(), this.settings));
+  }
+
+  private addTaskList(list: TaskList): void {
+    this.addPane(new TaskPane(list, this.api, this.paneCallbacks(), this.settings));
   }
 
   private paneCallbacks() {

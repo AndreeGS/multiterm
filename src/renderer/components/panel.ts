@@ -1,4 +1,5 @@
 import type { CanvasRect } from '../../domain/workspace/layout.js';
+import type { Appearance } from '../theme.js';
 
 /**
  * O que a grade e a area livre precisam de um painel. Terminais e notas
@@ -18,6 +19,8 @@ export interface Panel {
   setMaximized(maximized: boolean): void;
   /** Zoom da area livre: o painel escala a propria fonte (1 = normal). */
   setScale(scale: number): void;
+  /** Tema e tamanho de fonte vindos das configuracoes. */
+  setAppearance(appearance: Appearance): void;
   dispose(): void;
 }
 

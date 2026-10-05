@@ -5,18 +5,25 @@
 import type { TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js';
 import type { UsageSummary } from '../domain/usage/types.js';
 import type { Note, NotePatch } from '../domain/notes/note.js';
+import type { CanvasText, CanvasTextPatch } from '../domain/canvas/text.js';
+import type { TaskList, TaskListPatch } from '../domain/tasks/task-list.js';
 import type { LayoutSizes, SavedTerminal } from '../domain/workspace/config.js';
 import type { CanvasRect, CanvasView, GridLayoutId, LayoutId, TrackSizes } from '../domain/workspace/layout.js';
+import type { Settings } from '../domain/workspace/settings.js';
 
 export interface BootstrapState {
   readonly layout: LayoutId;
   readonly layoutSizes: LayoutSizes;
   readonly notes: Note[];
+  readonly taskLists: TaskList[];
+  /** Textos soltos da area livre. */
+  readonly texts: CanvasText[];
   readonly recentDirs: string[];
   readonly terminals: TerminalSnapshot[];
   /** Posicao de cada terminal na area livre, por id. */
   readonly terminalRects: Record<string, CanvasRect>;
   readonly canvasView: CanvasView | null;
+  readonly settings: Settings;
   /** Terminais da sessao anterior, esperando o usuario restaurar ou descartar. */
   readonly pendingSession: SavedTerminal[];
   readonly defaultDir: string;
@@ -57,11 +64,24 @@ export interface MultiTermApi {
   setLayoutSizes(layout: GridLayoutId, sizes: TrackSizes): void;
   /** Persiste pan/zoom da area livre (o main agrupa as escritas). */
   setCanvasView(view: CanvasView): void;
+  /** Persiste tema e tamanhos de fonte (o renderer ja aplicou). */
+  setSettings(settings: Settings): void;
 
   createNote(): Promise<Note>;
   /** Fire-and-forget: chamado a cada tecla; o main agrupa as escritas. */
   updateNote(id: string, patch: NotePatch): void;
   deleteNote(id: string): Promise<void>;
+
+  createTaskList(): Promise<TaskList>;
+  /** Fire-and-forget, como as notas. */
+  updateTaskList(id: string, patch: TaskListPatch): void;
+  deleteTaskList(id: string): Promise<void>;
+
+  /** Cria um texto vazio na area livre, na posicao do mundo dada. */
+  createText(x: number, y: number): Promise<CanvasText>;
+  /** Fire-and-forget, como as notas. */
+  updateText(id: string, patch: CanvasTextPatch): void;
+  deleteText(id: string): Promise<void>;
 
   /** Consumo local de tokens (nao e percentual do limite do plano). */
   getUsage(): Promise<UsageSummary>;
@@ -79,12 +99,21 @@ export const CHANNELS = {
   setLayout: 'workspace:set-layout',
   setLayoutSizes: 'workspace:set-layout-sizes',
   setCanvasView: 'workspace:set-canvas-view',
+  setSettings: 'workspace:set-settings',
   sessionRestore: 'session:restore',
   sessionDiscard: 'session:discard',
 
   noteCreate: 'note:create',
   noteUpdate: 'note:update',
   noteDelete: 'note:delete',
+
+  taskListCreate: 'tasks:create',
+  taskListUpdate: 'tasks:update',
+  taskListDelete: 'tasks:delete',
+
+  textCreate: 'text:create',
+  textUpdate: 'text:update',
+  textDelete: 'text:delete',
 
   usageGet: 'usage:get',
   usageRefresh: 'usage:refresh',
