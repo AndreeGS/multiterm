@@ -1,6 +1,7 @@
 import type { Note } from '../../domain/notes/note.js';
 import type { CanvasRect } from '../../domain/workspace/layout.js';
 import type { MultiTermApi } from '../../shared/contract.js';
+import type { Appearance } from '../theme.js';
 import { beginRename, button, el, type Panel } from './panel.js';
 
 export interface NoteCallbacks {
@@ -21,13 +22,17 @@ export class NotePane implements Panel {
   private readonly editor: HTMLTextAreaElement;
   private readonly maximizeBtn: HTMLButtonElement;
   private note: Note;
+  private fontSize: number;
+  private scale = 1;
 
   constructor(
     note: Note,
     private readonly api: MultiTermApi,
     private readonly callbacks: NoteCallbacks,
+    appearance: Appearance,
   ) {
     this.note = note;
+    this.fontSize = appearance.fontSize;
 
     this.element = el('div', 'pane note');
     this.element.dataset.id = note.id;
@@ -75,6 +80,7 @@ export class NotePane implements Panel {
     this.element.addEventListener('mousedown', () => this.callbacks.onFocus(this.id));
 
     this.render();
+    this.applyFontSize();
   }
 
   get id(): string {
@@ -109,8 +115,20 @@ export class NotePane implements Panel {
   }
 
   setScale(scale: number): void {
-    this.editor.style.fontSize = scale === 1 ? '' : `${12.5 * scale}px`;
-    this.editor.style.padding = scale === 1 ? '' : `${8 * scale}px ${10 * scale}px`;
+    this.scale = scale;
+    this.applyFontSize();
+  }
+
+  setAppearance(appearance: Appearance): void {
+    // As cores vem das variaveis CSS; so a fonte precisa de ajuste aqui.
+    this.fontSize = appearance.fontSize;
+    this.applyFontSize();
+  }
+
+  private applyFontSize(): void {
+    // Meio ponto acima do terminal: texto corrido le melhor um pouco maior.
+    this.editor.style.fontSize = `${(this.fontSize + 0.5) * this.scale}px`;
+    this.editor.style.padding = this.scale === 1 ? '' : `${8 * this.scale}px ${10 * this.scale}px`;
   }
 
   setMaximized(maximized: boolean): void {

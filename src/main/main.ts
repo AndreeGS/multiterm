@@ -3,9 +3,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { TerminalService } from '../application/terminal/terminal-service.js';
 import { NotesService } from '../application/notes/notes-service.js';
+import { TextsService } from '../application/canvas/texts-service.js';
+import { TasksService } from '../application/tasks/tasks-service.js';
 import { UsageService } from '../application/usage/usage-service.js';
 import { WorkspaceService } from '../application/workspace/workspace-service.js';
 import type { NotePatch } from '../domain/notes/note.js';
+import type { CanvasTextPatch } from '../domain/canvas/text.js';
+import type { TaskListPatch } from '../domain/tasks/task-list.js';
 import type { TerminalSpec } from '../domain/terminal/types.js';
 import type { SavedTerminal } from '../domain/workspace/config.js';
 import {
@@ -16,8 +20,11 @@ import {
   parseTrackSizes,
   type CanvasRect,
 } from '../domain/workspace/layout.js';
+import { parseSettings, WINDOW_BACKGROUND } from '../domain/workspace/settings.js';
 import { JsonConfigStore } from '../infrastructure/persistence/json-config-store.js';
 import { JsonNotesStore } from '../infrastructure/persistence/json-notes-store.js';
+import { JsonTextsStore } from '../infrastructure/persistence/json-texts-store.js';
+import { JsonTasksStore } from '../infrastructure/persistence/json-tasks-store.js';
 import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
 import { CHANNELS, type BootstrapState, type RestoredSession } from '../shared/contract.js';
 import { AttentionNotifier } from './attention.js';
@@ -28,6 +35,8 @@ let terminals: TerminalService;
 let attention: AttentionNotifier;
 let usage: UsageService;
 let notes: NotesService;
+let texts: TextsService;
+let tasks: TasksService;
 /** Posicao de cada terminal na area livre. Vive aqui porque a sessao nao sabe de layout. */
 const terminalRects = new Map<string, CanvasRect>();
 /**
@@ -45,7 +54,7 @@ function send(channel: string, ...args: unknown[]): void {
 }
 
 function createWindow(): void {
-  const { window } = workspace.current();
+  const { window, settings } = workspace.current();
 
   mainWindow = new BrowserWindow({
     x: window.x,
@@ -54,7 +63,7 @@ function createWindow(): void {
     height: window.height,
     minWidth: 720,
     minHeight: 480,
-    backgroundColor: '#0f1116',
+    backgroundColor: WINDOW_BACKGROUND[settings.theme],
     title: 'MultiTerm',
     show: false,
     webPreferences: {
@@ -127,10 +136,13 @@ function registerIpc(): void {
       layout: config.layout,
       layoutSizes: config.layoutSizes,
       notes: notes.list(),
+      taskLists: tasks.list(),
+      texts: texts.list(),
       recentDirs: config.recentDirs,
       terminals: terminals.list(),
       terminalRects: Object.fromEntries(terminalRects),
       canvasView: config.canvasView,
+      settings: config.settings,
       pendingSession,
       defaultDir: config.recentDirs[0] ?? homedir(),
       homeDir: homedir(),
@@ -195,12 +207,31 @@ function registerIpc(): void {
     const parsed = parseCanvasView(view);
     if (parsed) workspace.setCanvasView(parsed);
   });
+  ipcMain.on(CHANNELS.setSettings, (_event, settings: unknown) => {
+    const parsed = parseSettings(settings);
+    workspace.setSettings(parsed);
+    mainWindow?.setBackgroundColor(WINDOW_BACKGROUND[parsed.theme]);
+  });
 
   ipcMain.handle(CHANNELS.noteCreate, () => notes.create());
   ipcMain.on(CHANNELS.noteUpdate, (_event, id: string, patch: NotePatch) => {
     if (typeof patch === 'object' && patch !== null) notes.update(id, patch);
   });
   ipcMain.handle(CHANNELS.noteDelete, (_event, id: string) => notes.remove(id));
+
+  ipcMain.handle(CHANNELS.taskListCreate, () => tasks.create());
+  ipcMain.on(CHANNELS.taskListUpdate, (_event, id: string, patch: TaskListPatch) => {
+    if (typeof patch === 'object' && patch !== null) tasks.update(id, patch);
+  });
+  ipcMain.handle(CHANNELS.taskListDelete, (_event, id: string) => tasks.remove(id));
+
+  ipcMain.handle(CHANNELS.textCreate, (_event, x: unknown, y: unknown) =>
+    texts.create(Number.isFinite(x) ? (x as number) : 0, Number.isFinite(y) ? (y as number) : 0),
+  );
+  ipcMain.on(CHANNELS.textUpdate, (_event, id: string, patch: CanvasTextPatch) => {
+    if (typeof patch === 'object' && patch !== null) texts.update(id, patch);
+  });
+  ipcMain.handle(CHANNELS.textDelete, (_event, id: string) => texts.remove(id));
 }
 
 // Uma unica instancia: abrir de novo apenas foca a janela existente.
@@ -216,6 +247,8 @@ if (!app.requestSingleInstanceLock()) {
   void app.whenReady().then(() => {
     workspace = new WorkspaceService(new JsonConfigStore(app.getPath('userData')));
     notes = new NotesService(new JsonNotesStore(app.getPath('userData')));
+    texts = new TextsService(new JsonTextsStore(app.getPath('userData')));
+    tasks = new TasksService(new JsonTasksStore(app.getPath('userData')));
     attention = new AttentionNotifier(() => mainWindow);
     terminals = new TerminalService(new NodePtyFactory(), {
       onData: (id, chunk) => send(CHANNELS.data, id, chunk),
@@ -253,5 +286,7 @@ if (!app.requestSingleInstanceLock()) {
     terminals?.closeAll();
     workspace?.flush();
     notes?.flush();
+    texts?.flush();
+    tasks?.flush();
   });
 }

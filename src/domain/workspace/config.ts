@@ -11,6 +11,7 @@ import {
   type LayoutId,
   type TrackSizes,
 } from './layout.js';
+import { defaultSettings, parseSettings, type Settings } from './settings.js';
 
 export interface WindowBounds {
   x?: number;
@@ -43,6 +44,8 @@ export interface AppConfig {
   terminals: SavedTerminal[];
   /** Pan e zoom da area livre. Ausente = origem em 100%. */
   canvasView: CanvasView | null;
+  /** Tema e tamanhos de fonte. */
+  settings: Settings;
 }
 
 export const MAX_RECENT_DIRS = 12;
@@ -55,6 +58,7 @@ export function defaultConfig(): AppConfig {
     recentDirs: [],
     terminals: [],
     canvasView: null,
+    settings: defaultSettings(),
   };
 }
 
@@ -95,6 +99,7 @@ export function parseConfig(raw: unknown): AppConfig {
   }
 
   base.canvasView = parseCanvasView(input.canvasView);
+  base.settings = parseSettings(input.settings);
 
   return base;
 }

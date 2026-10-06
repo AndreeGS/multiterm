@@ -5,7 +5,16 @@ import {
   type CanvasRect,
   type CanvasView,
 } from '../../domain/workspace/layout.js';
+import type { CanvasText, CanvasTextPatch } from '../../domain/canvas/text.js';
+import { CanvasTextItem } from './canvas-text.js';
 import { button, drag, el, type Board, type Panel } from './panel.js';
+
+/** Onde a area livre guarda os textos soltos (o App liga isto a API). */
+export interface TextStore {
+  create(x: number, y: number): Promise<CanvasText>;
+  update(id: string, patch: CanvasTextPatch): void;
+  remove(id: string): void;
+}
 
 const DEFAULT_SIZE = { width: 640, height: 400 };
 const MIN_SIZE = { width: 280, height: 160 };
@@ -21,6 +30,9 @@ const ZOOM_STEP = 1.2;
  * O zoom e "semantico": em vez de um transform scale (que desalinha o mouse
  * com as celulas do xterm e borra o texto), posicao e tamanho sao
  * multiplicados pelo zoom e cada painel ajusta a propria fonte.
+ *
+ * Alem dos paineis, o fundo aceita textos soltos (duplo clique), que ficam
+ * sempre por baixo dos paineis.
  */
 export class CanvasBoard implements Board {
   readonly element = el('div', 'canvas');
@@ -28,6 +40,9 @@ export class CanvasBoard implements Board {
   private readonly zoomLabel: HTMLButtonElement;
   private readonly zoomBar = el('div', 'canvas-zoom');
   private readonly handles = new Map<string, HTMLElement>();
+  private readonly texts = new Map<string, CanvasTextItem>();
+  /** Camada dos textos: antes dos paineis no DOM, entao fica por baixo. */
+  private readonly textLayer = el('div', 'canvas-texts');
   private panes: Panel[] = [];
   private view: CanvasView = { x: 0, y: 0, zoom: 1 };
   /** Frame agendado para aplicar o zoom aos paineis (0 = nenhum). */
@@ -37,19 +52,31 @@ export class CanvasBoard implements Board {
   private cascade = 0;
 
   /** `onViewChange` recebe cada mudanca de pan/zoom, para persistir. */
-  constructor(private readonly onViewChange: (view: CanvasView) => void = () => {}) {
+  constructor(
+    private readonly onViewChange: (view: CanvasView) => void,
+    private readonly textStore: TextStore,
+  ) {
     this.zoomLabel = button('100%', 'Voltar para 100%', () => this.zoomBy(1 / this.view.zoom));
     this.zoomLabel.className = 'zoom-label';
     this.zoomBar.append(
+      button('T', 'Novo texto solto (ou duplo clique no fundo)', () => void this.createTextAtCenter()),
       button('−', 'Diminuir zoom (Ctrl+roda do mouse)', () => this.zoomBy(1 / ZOOM_STEP)),
       this.zoomLabel,
       button('+', 'Aumentar zoom (Ctrl+roda do mouse)', () => this.zoomBy(ZOOM_STEP)),
       button('Ajustar', 'Enquadrar todos os paineis', () => this.fitAll()),
     );
+    this.world.append(this.textLayer);
     this.element.append(this.world, this.zoomBar);
     this.element.title =
-      'Arraste o fundo para mover a vista · Ctrl+roda para zoom · duplo clique volta ao inicio';
+      'Arraste o fundo para mover a vista · Ctrl+roda para zoom · duplo clique escreve um texto';
 
+    // Arrastos cancelam o mousedown, e com isso o foco nao sairia do texto em
+    // edicao: clicar em qualquer outro lugar da area livre encerra a edicao.
+    this.element.addEventListener('mousedown', (event) => {
+      const active = document.activeElement as HTMLElement | null;
+      const editing = active?.closest('.canvas-text');
+      if (editing && !editing.contains(event.target as Node)) active!.blur();
+    }, true);
     this.element.addEventListener('mousedown', (event) => {
       if (event.button !== 0 || !this.isBackground(event.target)) return;
       const origin = this.view;
@@ -59,7 +86,11 @@ export class CanvasBoard implements Board {
       });
     });
     this.element.addEventListener('dblclick', (event) => {
-      if (this.isBackground(event.target)) this.setView({ x: 0, y: 0, zoom: 1 });
+      if (!this.isBackground(event.target)) return;
+      const box = this.element.getBoundingClientRect();
+      const { x, y, zoom } = this.view;
+      // Desloca um pouco para o cursor de texto cair onde o mouse estava.
+      void this.createText((event.clientX - box.left - x) / zoom - 4, (event.clientY - box.top - y) / zoom - 12);
     });
     this.element.addEventListener('wheel', (event) => this.onWheel(event), { passive: false });
 
@@ -70,6 +101,11 @@ export class CanvasBoard implements Board {
   /** Vista salva da sessao anterior. */
   restoreView(view: CanvasView): void {
     this.setView(view, false);
+  }
+
+  /** Textos salvos da sessao anterior. */
+  setTexts(texts: CanvasText[]): void {
+    for (const text of texts) this.addText(text);
   }
 
   get currentPage(): number {
@@ -127,7 +163,37 @@ export class CanvasBoard implements Board {
   }
 
   private isBackground(target: EventTarget | null): boolean {
-    return target === this.element || target === this.world;
+    return target === this.element || target === this.world || target === this.textLayer;
+  }
+
+  private async createText(x: number, y: number): Promise<void> {
+    const text = await this.textStore.create(x, y);
+    this.addText(text).edit();
+  }
+
+  private createTextAtCenter(): Promise<void> {
+    const { x, y, zoom } = this.view;
+    return this.createText((this.element.clientWidth / 2 - x) / zoom - 60, (this.element.clientHeight / 2 - y) / zoom - 12);
+  }
+
+  private addText(text: CanvasText): CanvasTextItem {
+    const item = new CanvasTextItem(text, {
+      onChange: (id, patch) => this.textStore.update(id, patch),
+      onRemove: (id) => this.removeText(id),
+    });
+    this.texts.set(text.id, item);
+    this.textLayer.append(item.element);
+    item.place(this.view.zoom);
+    return item;
+  }
+
+  /** Idempotente: o ✕ e o blur de um texto vazio podem chegar juntos. */
+  private removeText(id: string): void {
+    const item = this.texts.get(id);
+    if (!item) return;
+    this.texts.delete(id);
+    item.dispose();
+    this.textStore.remove(id);
   }
 
   private isInView(rect: CanvasRect): boolean {
@@ -153,7 +219,8 @@ export class CanvasBoard implements Board {
       this.setView(zoomAt(this.view, this.view.zoom * factor, event.clientX - box.left, event.clientY - box.top));
       return;
     }
-    if (!this.isBackground(event.target)) return;
+    const overText = (event.target as HTMLElement).closest?.('.canvas-text:not(.editing)');
+    if (!this.isBackground(event.target) && !overText) return;
     event.preventDefault();
     const dx = event.shiftKey ? event.deltaY : event.deltaX;
     const dy = event.shiftKey ? 0 : event.deltaY;
@@ -167,6 +234,7 @@ export class CanvasBoard implements Board {
 
   private fitAll(): void {
     const rects = this.panes.map((pane) => pane.canvasRect).filter((r): r is CanvasRect => r !== null);
+    for (const item of this.texts.values()) rects.push(item.worldRect);
     this.setView(fitView(rects, this.element.clientWidth, this.element.clientHeight));
   }
 
@@ -235,6 +303,7 @@ export class CanvasBoard implements Board {
 
   private render(): void {
     this.zoomBar.hidden = this.maximizedId !== null;
+    for (const item of this.texts.values()) item.place(this.view.zoom);
     for (const pane of this.panes) {
       const maximized = pane.id === this.maximizedId;
       const hidden = this.maximizedId !== null && !maximized;
@@ -257,7 +326,9 @@ export class CanvasBoard implements Board {
    */
   private scale(pane: Panel, zoom: number): void {
     pane.setScale(zoom);
-    pane.header.style.zoom = zoom === 1 ? '' : String(Math.min(1.4, Math.max(0.6, zoom)));
+    // Multiplica a escala da interface (configuracoes), que vem do CSS.
+    const clamped = Math.min(1.4, Math.max(0.6, zoom));
+    pane.header.style.zoom = zoom === 1 ? '' : `calc(var(--ui-zoom, 1) * ${clamped})`;
   }
 
   /** Converte o retangulo do mundo para pixels na tela, conforme o zoom. */

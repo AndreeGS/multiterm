@@ -57,13 +57,32 @@ npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 | `Ctrl+T` | Novo terminal (fora do foco de um terminal) |
 | `Ctrl+Shift+T` | Novo terminal (sempre) |
 | `Ctrl+Shift+N` | Novo bloco de notas |
+| `Ctrl+Shift+L` | Nova lista de tarefas |
 | `Ctrl+Shift+W` | Fechar o painel em foco |
 | `Ctrl+Shift+M` | Maximizar / restaurar o painel em foco |
+| `Ctrl+,` | Configuracoes (tema e tamanho da fonte) |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copiar / colar (o `Ctrl+C` puro continua sendo SIGINT) |
 | Duplo clique no nome | Renomear |
 
 Botoes de cada painel: `■` interromper (Ctrl+C), `⟳` reiniciar o shell,
 `⤢` maximizar, `✕` fechar.
+
+## Configuracoes
+
+O botao `⚙` na barra superior (ou `Ctrl+,`) abre as configuracoes. Tudo e
+aplicado na hora e fica salvo no `config.json`:
+
+- **Tema**: *Escuro* (o original) ou *Papel pardo*, um bege claro em tom de
+  papel kraft. No tema claro o xterm usa uma paleta ANSI escurecida e corrige o
+  contraste de cores que os programas pintam por conta propria
+  (`minimumContrastRatio`), para nada sumir no fundo claro;
+- **Fonte dos terminais e notas**: de 9 a 24px. Na area livre o zoom continua
+  multiplicando por cima;
+- **Tamanho da interface**: 90% a 140% para barra, cabecalhos e dialogos.
+
+As cores da UI sao variaveis CSS em `renderer/styles.css` (`:root` e
+`:root[data-theme="paper"]`); as do xterm ficam em `renderer/theme.ts`, porque
+ele pinta num canvas e nao enxerga CSS.
 
 ## Layouts
 
@@ -90,8 +109,9 @@ O fundo vira um plano infinito, e cada painel e uma janela flutuante:
 
 - arrastar o **cabecalho** move o painel; a **quina inferior direita** redimensiona;
 - clicar num painel traz ele para a frente;
-- arrastar o **fundo** (ou usar a roda do mouse nele) move a vista; duplo
-  clique no fundo volta ao inicio;
+- arrastar o **fundo** (ou usar a roda do mouse nele) move a vista;
+- **texto solto**: duplo clique no fundo (ou o botao `T`) escreve direto no
+  plano, sem painel (ver abaixo);
 - **zoom**: `Ctrl` + roda do mouse (ancorado no cursor, funciona ate em cima
   de um painel) ou os botoes `−` / `+` no canto inferior direito, de 30% a 200%.
   Clicar na porcentagem volta a 100%; `Ajustar` enquadra todos os paineis;
@@ -105,6 +125,18 @@ juntos, o numero de colunas/linhas do shell praticamente nao muda.
 
 A posicao das notas e dos terminais na area livre e salva, assim como o pan e
 o zoom da vista.
+
+#### Texto solto
+
+Para titulos e anotacoes rapidas no quadro, sem abrir um bloco de notas:
+
+- duplo clique no fundo cria um texto ali e ja entra em edicao (`Enter` quebra
+  linha; `Esc` ou clicar fora termina);
+- arrastar move; clicar sem arrastar volta a editar;
+- passando o mouse aparecem `A−` / `A+` (tamanho, de 12 a 64px) e `✕` (apagar).
+  Um texto que fica vazio some sozinho;
+- os textos ficam sempre por baixo dos paineis, acompanham o zoom e entram no
+  `Ajustar`. So aparecem na area livre — nas grades nao ha onde po-los.
 
 Ao abrir o app, se havia terminais na sessao anterior, aparece o botao
 **⟲ Restaurar sessao (N)** na barra: ele reabre cada terminal com o mesmo nome,
@@ -122,6 +154,25 @@ qualquer layout, igual a um terminal (maximizar, renomear com duplo clique).
   e as notas reabrem quando o app inicia.
 - `Tab` indenta; `⧉` copia o texto inteiro.
 - Fechar (`✕`) **apaga** a nota; se ela tiver conteudo, o app pede confirmacao.
+
+## Lista de tarefas
+
+`+ Tarefas` (ou `Ctrl+Shift+L`) abre um painel de checklist, para ir anotando
+o que falta e marcando o que ja foi feito. Funciona em qualquer layout, como
+as notas (maximizar, renomear com duplo clique).
+
+- Digite no campo de cima e `Enter` adiciona; o foco fica no campo para
+  emendar varias seguidas.
+- Marcar o checkbox conclui: a tarefa vai riscada para **Concluidas** (a mais
+  recente no topo, com a data no tooltip). Desmarcar devolve para o mesmo
+  lugar entre as pendentes. A secao de concluidas recolhe com um clique.
+- Duplo clique no texto edita (`Enter` confirma, `Esc` cancela; apagar o texto
+  remove a tarefa). Passando o mouse aparece o `✕` para apagar.
+- Arrastar uma pendente sobre outra reordena.
+- O cabecalho mostra `N/M concluidas` e uma barra de progresso; `⌫` apaga
+  todas as concluidas (com confirmacao).
+- Salva sozinho em `tasks.json`. Fechar (`✕`) **apaga** a lista; se ela tiver
+  tarefas, o app pede confirmacao.
 
 ## Indicador de atividade
 
@@ -185,13 +236,16 @@ tokens, mas nao custo, e sao listados no tooltip.
 
 ## Persistencia
 
-Dois arquivos em `app.getPath('userData')` (`~/.config/MultiTerm/` no Linux),
-ambos com escrita atomica, sem banco de dados:
+Quatro arquivos em `app.getPath('userData')` (`~/.config/MultiTerm/` no Linux),
+todos com escrita atomica, sem banco de dados:
 
 - `config.json`: tamanho/posicao da janela, layout escolhido, proporcoes das
   divisorias de cada grade, diretorios recentes, terminais abertos (nome,
-  diretorio, shell, posicao) e a vista da area livre;
-- `notes.json`: as notas (titulo, texto e posicao na area livre).
+  diretorio, shell, posicao), a vista da area livre e as configuracoes de
+  aparencia;
+- `notes.json`: as notas (titulo, texto e posicao na area livre);
+- `texts.json`: os textos soltos da area livre (conteudo, posicao, tamanho);
+- `tasks.json`: as listas de tarefas (titulo, itens, posicao na area livre).
 
 O historico (scrollback) e os processos dos terminais nao sao persistidos.
 
@@ -203,15 +257,20 @@ src/
     terminal/      TerminalSession (ciclo de vida, atividade, replay), porta Pty
     workspace/     layouts (templates, divisorias) e formato do config.json
     notes/         formato e validacao das notas
+    canvas/        formato e validacao dos textos soltos
+    tasks/         formato e validacao das listas de tarefas
   application/     casos de uso (orquestram o dominio)
     terminal/      TerminalService — unico dono do conjunto de sessoes
     workspace/     WorkspaceService — preferencias, com save debounced
     notes/         NotesService — notas, com save debounced
+    canvas/        TextsService — textos soltos, com save debounced
+    tasks/         TasksService — listas de tarefas, com save debounced
   infrastructure/  adaptadores concretos
     terminal/      NodePtyFactory implementa a porta Pty
-    persistence/   JsonConfigStore, JsonNotesStore (escrita atomica)
+    persistence/   JsonConfigStore, JsonNotesStore, JsonTextsStore,
+                   JsonTasksStore (escrita atomica)
   main/            processo principal do Electron: janela + IPC + wiring
-  renderer/        UI: paineis (terminal, nota), grade, area livre, toolbar
+  renderer/        UI: paineis (terminal, nota, tarefas), grade, area livre, toolbar
   shared/          contrato de IPC tipado, compartilhado pelos tres bundles
   test/            teste de integracao do PTY
 ```

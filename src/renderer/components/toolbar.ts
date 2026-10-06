@@ -5,12 +5,14 @@ import { UsageBar } from './usage-bar.js';
 export interface ToolbarCallbacks {
   onNewTerminal(): void;
   onNewNote(): void;
+  onNewTaskList(): void;
   onLayout(layout: LayoutId): void;
   onPage(delta: number): void;
   /** Pular para o proximo terminal que pediu atencao. */
   onNextAttention(): void;
   onRestoreSession(): void;
   onDiscardSession(): void;
+  onSettings(): void;
 }
 
 export class Toolbar {
@@ -41,6 +43,11 @@ export class Toolbar {
     noteBtn.textContent = '+ Nota';
     noteBtn.title = 'Novo bloco de notas (Ctrl+Shift+N)';
     noteBtn.addEventListener('click', () => this.callbacks.onNewNote());
+
+    const tasksBtn = document.createElement('button');
+    tasksBtn.textContent = '+ Tarefas';
+    tasksBtn.title = 'Nova lista de tarefas (Ctrl+Shift+L)';
+    tasksBtn.addEventListener('click', () => this.callbacks.onNewTaskList());
 
     const layoutGroup = document.createElement('div');
     layoutGroup.className = 'group';
@@ -83,16 +90,24 @@ export class Toolbar {
 
     const usage = new UsageBar(api);
 
+    const settingsBtn = document.createElement('button');
+    settingsBtn.className = 'settings-btn';
+    settingsBtn.textContent = '⚙';
+    settingsBtn.title = 'Configuracoes: tema e tamanho da fonte (Ctrl+,)';
+    settingsBtn.addEventListener('click', () => this.callbacks.onSettings());
+
     this.element.append(
       brand,
       newBtn,
       noteBtn,
+      tasksBtn,
       this.attentionBtn,
       this.sessionGroup,
       spacer,
       usage.element,
       this.pageGroup,
       layoutGroup,
+      settingsBtn,
     );
   }
 

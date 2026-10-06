@@ -1,13 +1,14 @@
 import { type AppConfig, withRecentDir } from '../../domain/workspace/config.js';
 import type { CanvasView, GridLayoutId, LayoutId, TrackSizes } from '../../domain/workspace/layout.js';
 import type { SavedTerminal, WindowBounds } from '../../domain/workspace/config.js';
+import type { Settings } from '../../domain/workspace/settings.js';
 import type { JsonConfigStore } from '../../infrastructure/persistence/json-config-store.js';
 
 const SAVE_DEBOUNCE_MS = 400;
 
 /**
  * Caso de uso: preferencias do workspace (layout, janela, diretorios recentes,
- * terminais abertos e vista da area livre).
+ * terminais abertos, vista da area livre e aparencia).
  * Mantem o estado em memoria e persiste com debounce para nao escrever no disco
  * a cada pixel de resize.
  */
@@ -40,6 +41,11 @@ export class WorkspaceService {
 
   setCanvasView(canvasView: CanvasView): void {
     this.config = { ...this.config, canvasView };
+    this.scheduleSave();
+  }
+
+  setSettings(settings: Settings): void {
+    this.config = { ...this.config, settings };
     this.scheduleSave();
   }
 
