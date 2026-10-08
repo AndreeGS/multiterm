@@ -1,4 +1,5 @@
 import { parseCanvasRect, type CanvasRect } from '../workspace/layout.js';
+import { parseTerminalId } from '../terminal/link.js';
 
 /** Um item da lista. `doneAt` guarda quando foi concluido (null = pendente). */
 export interface TaskItem {
@@ -17,6 +18,8 @@ export interface TaskList {
   readonly items: TaskItem[];
   /** Posicao na area livre; `null` ate o painel ser posicionado la. */
   readonly rect: CanvasRect | null;
+  /** Terminal vinculado: recebe as tarefas enviadas com ▶. `null` = nenhum. */
+  readonly terminalId: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -26,13 +29,14 @@ export interface TaskListPatch {
   title?: string;
   items?: TaskItem[];
   rect?: CanvasRect | null;
+  terminalId?: string | null;
 }
 
 export const MAX_TITLE_LENGTH = 80;
 export const MAX_ITEM_LENGTH = 500;
 
 export function createTaskList(id: string, title: string, now: number): TaskList {
-  return { id, title: cleanTitle(title) || 'Tarefas', items: [], rect: null, createdAt: now, updatedAt: now };
+  return { id, title: cleanTitle(title) || 'Tarefas', items: [], rect: null, terminalId: null, createdAt: now, updatedAt: now };
 }
 
 /** Aplica so os campos validos do patch; titulo vazio mantem o anterior. */
@@ -43,6 +47,7 @@ export function applyTaskListPatch(list: TaskList, patch: TaskListPatch, now: nu
     title: title || list.title,
     items: Array.isArray(patch.items) ? parseItems(patch.items) : list.items,
     rect: patch.rect === undefined ? list.rect : parseCanvasRect(patch.rect),
+    terminalId: patch.terminalId === undefined ? list.terminalId : parseTerminalId(patch.terminalId),
     updatedAt: now,
   };
 }
@@ -62,6 +67,7 @@ export function parseTaskLists(raw: unknown): TaskList[] {
       title: (typeof input.title === 'string' && cleanTitle(input.title)) || 'Tarefas',
       items: Array.isArray(input.items) ? parseItems(input.items) : [],
       rect: parseCanvasRect(input.rect),
+      terminalId: parseTerminalId(input.terminalId),
       createdAt,
       updatedAt: isTimestamp(input.updatedAt) ? input.updatedAt : createdAt,
     });

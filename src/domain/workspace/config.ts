@@ -26,6 +26,8 @@ export interface WindowBounds {
  * abertura sobe um shell novo com o mesmo nome, diretorio e posicao.
  */
 export interface SavedTerminal {
+  /** Reusado ao restaurar: e por ele que notas e listas se vinculam. */
+  id?: string;
   name: string;
   cwd: string;
   shell?: string;
@@ -123,6 +125,7 @@ function parseSavedTerminal(raw: unknown): SavedTerminal | null {
   const input = raw as Record<string, unknown>;
   if (typeof input.cwd !== 'string' || !input.cwd) return null;
   const saved: SavedTerminal = {
+    ...(typeof input.id === 'string' && input.id ? { id: input.id } : {}),
     name: typeof input.name === 'string' ? input.name : '',
     cwd: input.cwd,
     rect: parseCanvasRect(input.rect),

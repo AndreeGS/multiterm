@@ -10,6 +10,8 @@ import { tmpdir } from 'node:os';
 import { TerminalService } from '../application/terminal/terminal-service.js';
 import { withContinue } from '../domain/terminal/command.js';
 import { BELL, SignalScanner } from '../domain/terminal/signals.js';
+import { applyNotePatch, parseNotes } from '../domain/notes/note.js';
+import { parseConfig } from '../domain/workspace/config.js';
 import type { TerminalSnapshot } from '../domain/terminal/types.js';
 import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
 
@@ -176,6 +178,19 @@ async function run(): Promise<void> {
   check('preserva flags', withContinue('claude --model opus') === 'claude --continue --model opus');
   check('nao duplica', withContinue('claude -c') === 'claude -c' && withContinue('claude --resume x') === 'claude --resume x');
   check('ignora outros comandos', withContinue('npm run dev') === 'npm run dev');
+
+  // 14. vinculo nota -> terminal sobrevive ao reinicio: o terminal restaurado reusa o id
+  const reused = service.create({ name: 'restaurado', cwd: tmpdir() }, undefined, 'id-da-sessao-anterior');
+  check('restaurar reusa o id salvo', reused.id === 'id-da-sessao-anterior');
+  const clash = service.create({ name: 'outro', cwd: tmpdir() }, undefined, 'id-da-sessao-anterior');
+  check('id em uso nao e reaproveitado', clash.id !== 'id-da-sessao-anterior');
+  service.close(reused.id);
+  service.close(clash.id);
+  const saved = parseConfig({ terminals: [{ id: 'abc', name: 'x', cwd: '/tmp' }] });
+  check('config guarda o id do terminal', saved.terminals[0]?.id === 'abc');
+  const [note] = parseNotes({ notes: [{ id: 'n', terminalId: 'abc' }] });
+  check('nota guarda o vinculo', note?.terminalId === 'abc');
+  check('patch remove o vinculo', note !== undefined && applyNotePatch(note, { terminalId: null }, 0).terminalId === null);
 }
 
 void app.whenReady().then(async () => {

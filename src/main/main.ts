@@ -102,6 +102,7 @@ function persistBounds(): void {
 function persistTerminals(): void {
   if (restoring) return;
   const live = terminals.list().map((snapshot) => ({
+    id: snapshot.id,
     name: snapshot.name,
     cwd: snapshot.cwd,
     shell: snapshot.shell,
@@ -123,7 +124,7 @@ function restoreSession(): RestoredSession {
         cwd: entry.cwd,
         shell: entry.shell,
         command: entry.command ? resumeCommand(entry.command, entry.cwd) : undefined,
-      });
+      }, undefined, entry.id);
       restored.terminals.push(snapshot);
       if (entry.rect) {
         terminalRects.set(snapshot.id, entry.rect);

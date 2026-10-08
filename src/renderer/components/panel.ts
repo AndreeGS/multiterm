@@ -106,3 +106,47 @@ export function beginRename(target: HTMLElement, current: string, onCommit: (nam
     event.stopPropagation();
   });
 }
+
+export interface LinkCallbacks {
+  /** Mousedown no 🔗: clicar abre a lista, arrastar ate um terminal vincula. */
+  onLinkGesture(sourceId: string, event: MouseEvent): void;
+  /** Teclado (Enter/Espaco no 🔗): abre a lista de terminais. */
+  onLinkPick(sourceId: string): void;
+}
+
+/** O que mostrar no 🔗: nome do terminal, e se ele esta aberto agora. */
+export interface LinkLabel {
+  readonly name: string;
+  /** `false` = terminal da sessao anterior ainda nao restaurado. */
+  readonly open: boolean;
+}
+
+/** Botao 🔗 do cabecalho de notas e listas. */
+export function linkChip(sourceId: () => string, callbacks: LinkCallbacks): HTMLButtonElement {
+  const chip = el('button', 'link-chip');
+  chip.addEventListener('mousedown', (event) => {
+    if (event.button !== 0) return;
+    // Sem isto o cabecalho da area livre comecaria a arrastar o painel.
+    event.stopPropagation();
+    event.preventDefault();
+    callbacks.onLinkGesture(sourceId(), event);
+  });
+  chip.addEventListener('click', (event) => {
+    event.stopPropagation();
+    // detail 0 = clique vindo do teclado; o do mouse ja foi tratado no mousedown.
+    if (event.detail === 0) callbacks.onLinkPick(sourceId());
+  });
+  return chip;
+}
+
+export function renderLinkChip(chip: HTMLButtonElement, label: LinkLabel | null): void {
+  chip.classList.toggle('linked', label !== null);
+  chip.classList.toggle('missing', label !== null && !label.open);
+  chip.textContent = label ? `🔗 ${label.name}` : '🔗 vincular';
+  chip.title = label
+    ? (label.open
+        ? `Vinculado ao terminal "${label.name}".`
+        : `Vinculado a "${label.name}", da sessao anterior (ainda nao restaurado).`) +
+      '\nClique para trocar ou remover · arraste ate um terminal para vincular a ele'
+    : 'Vincular a um terminal: clique para escolher, ou arraste ate o terminal';
+}

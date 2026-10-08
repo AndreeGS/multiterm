@@ -1,4 +1,5 @@
 import { parseCanvasRect, type CanvasRect } from '../workspace/layout.js';
+import { parseTerminalId } from '../terminal/link.js';
 
 /** Bloco de notas. Diferente dos terminais, sobrevive ao reinicio do app. */
 export interface Note {
@@ -7,6 +8,8 @@ export interface Note {
   readonly content: string;
   /** Posicao na area livre; `null` ate o painel ser posicionado la. */
   readonly rect: CanvasRect | null;
+  /** Terminal vinculado: recebe o Ctrl+Enter. `null` = nenhum. */
+  readonly terminalId: string | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -15,12 +18,13 @@ export interface NotePatch {
   title?: string;
   content?: string;
   rect?: CanvasRect | null;
+  terminalId?: string | null;
 }
 
 export const MAX_TITLE_LENGTH = 80;
 
 export function createNote(id: string, title: string, now: number): Note {
-  return { id, title: cleanTitle(title) || 'Nota', content: '', rect: null, createdAt: now, updatedAt: now };
+  return { id, title: cleanTitle(title) || 'Nota', content: '', rect: null, terminalId: null, createdAt: now, updatedAt: now };
 }
 
 /** Aplica so os campos validos do patch; titulo vazio mantem o anterior. */
@@ -31,6 +35,7 @@ export function applyNotePatch(note: Note, patch: NotePatch, now: number): Note 
     title: title || note.title,
     content: typeof patch.content === 'string' ? patch.content : note.content,
     rect: patch.rect === undefined ? note.rect : parseCanvasRect(patch.rect),
+    terminalId: patch.terminalId === undefined ? note.terminalId : parseTerminalId(patch.terminalId),
     updatedAt: now,
   };
 }
@@ -50,6 +55,7 @@ export function parseNotes(raw: unknown): Note[] {
       title: (typeof input.title === 'string' && cleanTitle(input.title)) || 'Nota',
       content: typeof input.content === 'string' ? input.content : '',
       rect: parseCanvasRect(input.rect),
+      terminalId: parseTerminalId(input.terminalId),
       createdAt,
       updatedAt: Number.isFinite(input.updatedAt) ? (input.updatedAt as number) : createdAt,
     });

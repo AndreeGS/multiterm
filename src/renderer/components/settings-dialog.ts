@@ -46,6 +46,13 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
         <div class="settings-label">Tamanho da interface</div>
         <div class="segmented" id="scales"></div>
       </section>
+      <section>
+        <div class="settings-label">Vinculos</div>
+        <label class="check-row">
+          <input type="checkbox" id="show-links" />
+          Na area livre, linha ligando cada nota e lista de tarefas ao terminal vinculado
+        </label>
+      </section>
       <div class="modal-actions">
         <button type="button" id="reset">Restaurar padrao</button>
         <span class="spacer"></span>
@@ -60,6 +67,8 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
     const fontValue = modal.querySelector<HTMLElement>('#font-value')!;
     const fontPreview = modal.querySelector<HTMLElement>('#font-preview')!;
     const scalesBox = modal.querySelector<HTMLElement>('#scales')!;
+    const showLinks = modal.querySelector<HTMLInputElement>('#show-links')!;
+    showLinks.addEventListener('change', () => update({ showLinks: showLinks.checked }));
 
     const themeButtons = new Map<ThemeId, HTMLButtonElement>();
     for (const theme of THEMES) {
@@ -92,6 +101,7 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
       fontInput.value = String(settings.fontSize);
       fontValue.textContent = `${settings.fontSize}px`;
       fontPreview.style.fontSize = `${settings.fontSize}px`;
+      showLinks.checked = settings.showLinks;
     };
 
     const update = (patch: Partial<Settings>) => {

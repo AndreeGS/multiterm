@@ -202,6 +202,8 @@ button.primary:hover:not(:disabled) { background: var(--primary-hover); border-c
 .grid-wrap {
   position: relative;
   overflow: hidden;
+  /* Contexto proprio: a camada de linhas (z-index alto) nao passa por cima dos dialogos. */
+  isolation: isolate;
 }
 .grid {
   /* padding e gap precisam bater com PAD/GAP em components/grid.ts. */
@@ -821,3 +823,61 @@ body.show-indexes .pane-header[data-index]::before {
   color: var(--fg-dim);
 }
 .palette-empty { padding: 8px 9px; color: var(--fg-dim); font-style: italic; }
+.modal label.check-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--fg);
+  cursor: pointer;
+}
+.check-row input { accent-color: var(--border-active); margin: 0; }
+
+/* ---------- vinculos nota/lista -> terminal ---------- */
+.link-chip {
+  flex: none;
+  max-width: 40%;
+  padding: 1px 7px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+  border-style: dashed;
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.link-chip.linked { color: var(--accent); border-style: solid; border-color: var(--accent); }
+.link-chip.missing { color: var(--fg-dim); border-style: dashed; border-color: var(--border); }
+
+.link-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  /* Acima dos paineis flutuantes (z-index crescente), abaixo do maximizado (100000). */
+  z-index: 99999;
+  overflow: visible;
+}
+.link-layer .link {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  opacity: 0.7;
+}
+.link-layer .link-end { fill: none; stroke: var(--accent); stroke-width: 2; }
+.link-layer .attention { stroke: var(--idle); }
+.link-layer .link-end.attention { stroke: var(--idle); }
+.link-layer .notice { stroke: var(--notice); }
+.link-layer .link-end.notice { stroke: var(--notice); }
+.link-layer .draft { stroke-dasharray: 6 5; opacity: 1; }
+
+/* Arrastando o 🔗: terminais viram alvo, nada mais captura o mouse. */
+body.linking, body.linking * { cursor: crosshair !important; }
+body.linking .pane-body { pointer-events: none; user-select: none; }
+.pane.link-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }

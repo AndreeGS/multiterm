@@ -2,14 +2,26 @@ import { cleanItemText, type TaskItem, type TaskList } from '../../domain/tasks/
 import type { CanvasRect } from '../../domain/workspace/layout.js';
 import type { MultiTermApi } from '../../shared/contract.js';
 import type { Appearance } from '../theme.js';
-import { beginRename, button, el, type Panel } from './panel.js';
+import {
+  beginRename,
+  button,
+  el,
+  linkChip,
+  renderLinkChip,
+  type LinkCallbacks,
+  type LinkLabel,
+  type Panel,
+} from './panel.js';
 
-export interface TaskCallbacks {
+export interface TaskCallbacks extends LinkCallbacks {
   onFocus(id: string): void;
   onMaximize(id: string): void;
   onClose(id: string): void;
-  /** Manda texto ao terminal: o ultimo usado, ou um escolhido na hora (`pick`). */
-  onSend(text: string, pick: boolean): Promise<string | null>;
+  /**
+   * Manda texto ao terminal vinculado; `pick` (ou sem vinculo) pergunta qual.
+   * Devolve o nome do terminal que recebeu, ou `null` se nao mandou.
+   */
+  onSend(sourceId: string, text: string, pick: boolean): Promise<string | null>;
 }
 
 /**
@@ -33,7 +45,8 @@ export class TaskPane implements Panel {
   private list: TaskList;
   /** Tarefas ja mandadas a um agente nesta sessao (id -> nome do terminal). */
   private readonly sent = new Map<string, string>();
-  private sendTarget: string | null = null;
+  private readonly chip: HTMLButtonElement;
+  private linkName: string | null = null;
   private doneCollapsed = false;
   /** Item sendo arrastado para reordenar. */
   private draggingId: string | null = null;
@@ -69,6 +82,9 @@ export class TaskPane implements Panel {
       }),
     );
 
+    this.chip = linkChip(() => this.id, this.callbacks);
+    renderLinkChip(this.chip, null);
+
     const actions = el('div', 'pane-actions');
     this.clearBtn = button('⌫', 'Apagar as tarefas concluidas', () => this.clearDone());
     this.maximizeBtn = button('⤢', 'Maximizar / restaurar', () => this.callbacks.onMaximize(this.id));
@@ -77,7 +93,7 @@ export class TaskPane implements Panel {
       this.maximizeBtn,
       button('✕', 'Fechar e apagar lista', () => this.callbacks.onClose(this.id)),
     );
-    this.header.append(icon, title, actions);
+    this.header.append(icon, title, this.chip, actions);
 
     this.progress = el('div', 'tasks-progress');
     this.progress.append(el('div', 'tasks-progress-fill'));
@@ -163,14 +179,28 @@ export class TaskPane implements Panel {
     this.element.remove();
   }
 
-  /** Nome do terminal que recebe o ▶ das tarefas. */
-  setSendTarget(name: string | null): void {
-    this.sendTarget = name;
+  get terminalId(): string | null {
+    return this.list.terminalId;
+  }
+
+  /** Troca o terminal vinculado e persiste. */
+  setLink(terminalId: string | null): void {
+    if (terminalId === this.list.terminalId) return;
+    this.list = { ...this.list, terminalId };
+    this.api.updateTaskList(this.id, { terminalId });
+  }
+
+  /** O App resolve o nome do terminal (ou `null`, sem vinculo). */
+  showLink(label: LinkLabel | null): void {
+    renderLinkChip(this.chip, label);
+    const name = label?.open ? label.name : null;
+    if (name === this.linkName) return;
+    this.linkName = name;
     this.render();
   }
 
   private async send(item: TaskItem, pick: boolean): Promise<void> {
-    const target = await this.callbacks.onSend(item.text, pick);
+    const target = await this.callbacks.onSend(this.id, item.text, pick);
     if (!target) return;
     this.sent.set(item.id, target);
     this.render();
@@ -292,7 +322,8 @@ export class TaskPane implements Panel {
     if (!item.done) {
       const sendBtn = button('▶', '', () => void this.send(item, false));
       sendBtn.className = 'tasks-send';
-      sendBtn.title = `Enviar como prompt para ${this.sendTarget ?? 'um terminal'}\nShift+clique: escolher o terminal`;
+      sendBtn.title = (this.linkName ? `Enviar como prompt para ${this.linkName}` : 'Enviar como prompt (escolher o terminal)') +
+        '\nShift+clique: escolher outro terminal (e vincular a ele)';
       sendBtn.addEventListener('click', (event) => {
         if (!event.shiftKey) return;
         event.stopImmediatePropagation();

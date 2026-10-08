@@ -64,7 +64,7 @@ npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 | `Alt+1` … `Alt+9` | Ir direto para o painel N (segurar `Alt` mostra os numeros) |
 | `Ctrl+PageDown` / `Ctrl+PageUp` | Painel seguinte / anterior |
 | `Ctrl+Shift+A` | Proximo terminal aguardando voce |
-| `Ctrl+Enter` (numa nota) | Envia a selecao ou a linha do cursor ao terminal |
+| `Ctrl+Enter` (numa nota) | Envia a selecao ou a linha do cursor ao terminal vinculado |
 | `Ctrl+,` | Configuracoes (tema e tamanho da fonte) |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copiar / colar (o `Ctrl+C` puro continua sendo SIGINT) |
 | Duplo clique no nome | Renomear |
@@ -213,9 +213,30 @@ Notas e tarefas viram roteiros para os agentes:
 - **Tarefa**: o `▶` que aparece passando o mouse manda o texto da tarefa como
   prompt. Ela ganha a marca `→ terminal` ate ser concluida (so nesta sessao).
 
-O destino e o ultimo terminal que teve foco, mostrado no cabecalho da nota
-(`Ctrl+Enter → nome`). `Ctrl+Shift+Enter` na nota, ou `Shift`+clique no `▶`,
-abre a lista de terminais para escolher.
+### Vinculo com um terminal
+
+Cada nota e cada lista de tarefas tem um `🔗` no cabecalho, que diz para qual
+terminal o texto vai. O vinculo e sempre escolhido por voce:
+
+- **clicar** no `🔗` abre a lista de terminais (e `Remover vinculo`);
+- **arrastar** o `🔗` ate um terminal vincula a ele (o terminal acende ao
+  passar por cima);
+- enviar sem vinculo pergunta o terminal, e a escolha vira o vinculo;
+  `Ctrl+Shift+Enter` na nota, ou `Shift`+clique no `▶`, pergunta de novo e
+  troca o vinculo;
+- a paleta (`Ctrl+Shift+P`) tem `Vincular "<painel>" a um terminal`.
+
+O vinculo e salvo junto com a nota/lista e sobrevive ao reinicio: o terminal
+restaurado volta com o mesmo id. Enquanto a sessao nao e restaurada o `🔗`
+aparece apagado; descartar a sessao ou fechar o terminal (`✕`) desfaz o
+vinculo.
+
+**Na area livre**, uma linha liga o `🔗` ao ponto de status do terminal,
+acompanhando arrasto, zoom e pan. Ela muda de cor com o terminal (ambar
+aguardando, roxo com pedido explicito) e some quando uma das pontas esta
+coberta por outro painel. Nas grades nao ha linha — os paineis sao vizinhos
+fixos e ela cruzaria o conteudo; la o nome no `🔗` basta. Da para desligar a
+linha em Configuracoes.
 
 ## Indicador de atividade
 
@@ -306,9 +327,11 @@ todos com escrita atomica, sem banco de dados:
   divisorias de cada grade, diretorios e comandos recentes, terminais abertos
   (nome, diretorio, shell, comando inicial, posicao), a vista da area livre e as configuracoes de
   aparencia;
-- `notes.json`: as notas (titulo, texto e posicao na area livre);
+- `notes.json`: as notas (titulo, texto, posicao na area livre e terminal
+  vinculado);
 - `texts.json`: os textos soltos da area livre (conteudo, posicao, tamanho);
-- `tasks.json`: as listas de tarefas (titulo, itens, posicao na area livre).
+- `tasks.json`: as listas de tarefas (titulo, itens, posicao na area livre e
+  terminal vinculado).
 
 O historico (scrollback) e os processos dos terminais nao sao persistidos.
 
