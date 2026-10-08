@@ -17,6 +17,8 @@ export interface TerminalSpec {
   readonly cwd: string;
   /** Shell a executar. Se ausente, usa o shell padrao do sistema. */
   readonly shell?: string;
+  /** Digitado no shell quando ele fica pronto (ex.: `claude`). Vazio = nenhum. */
+  readonly command?: string;
 }
 
 /** Projecao serializavel de uma sessao, enviada ao renderer. */
@@ -25,6 +27,8 @@ export interface TerminalSnapshot {
   readonly name: string;
   readonly cwd: string;
   readonly shell: string;
+  /** Comando inicial, repetido a cada restart. `null` = so o shell. */
+  readonly command: string | null;
   readonly status: TerminalStatus;
   readonly exitCode: number | null;
   readonly createdAt: number;
@@ -33,6 +37,12 @@ export interface TerminalSnapshot {
    * olhou para ele. E o sinal de "este agente devolveu o controle".
    */
   readonly needsAttention: boolean;
+  /**
+   * O processo pediu atencao explicitamente (BEL ou notificacao OSC 9/777/99),
+   * com a mensagem que mandou. Mais forte que o silencio: so some quando voce
+   * olha ou digita, nao quando o agente volta a imprimir.
+   */
+  readonly notice: string | null;
 }
 
 export interface TerminalSize {

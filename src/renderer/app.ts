@@ -5,6 +5,7 @@ import { capacity, isGridLayout, layoutFor, type CanvasRect, type LayoutId } fro
 import { defaultSettings, type Settings } from '../domain/workspace/settings.js';
 import type { MultiTermApi } from '../shared/contract.js';
 import { CanvasBoard } from './components/canvas.js';
+import { openPalette, type PaletteItem } from './components/command-palette.js';
 import { TerminalGrid } from './components/grid.js';
 import { openNewTerminalDialog } from './components/new-terminal-dialog.js';
 import { NotePane } from './components/note-pane.js';
@@ -13,7 +14,8 @@ import type { Board, Panel } from './components/panel.js';
 import { TaskPane } from './components/task-pane.js';
 import { TerminalPane } from './components/terminal-pane.js';
 import { Toolbar } from './components/toolbar.js';
-import { setHomeDir } from './paths.js';
+import { setHomeDir, shortenPath } from './paths.js';
+import { matchShortcut, type Shortcut } from './shortcuts.js';
 import { applyDocumentSettings } from './theme.js';
 
 /**
@@ -29,6 +31,10 @@ export class App {
   private readonly emptyState = document.createElement('div');
   private layout: LayoutId;
   private recentDirs: string[] = [];
+  private recentCommands: string[] = [];
+  /** Ultimo terminal em foco: destino do Ctrl+Enter das notas e do ▶ das tarefas. */
+  private lastTerminalId: string | null = null;
+  private pendingSession = 0;
   private defaultDir = '';
   private focusedId: string | null = null;
   private readonly attention = new Set<string>();
@@ -69,7 +75,8 @@ export class App {
     this.emptyState.className = 'empty';
     this.emptyState.innerHTML =
       '<div>Nada aberto ainda.</div>' +
-      '<div><kbd>Ctrl</kbd>+<kbd>T</kbd> novo terminal · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> nova nota · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> nova lista de tarefas</div>';
+      '<div><kbd>Ctrl</kbd>+<kbd>T</kbd> novo terminal · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> nova nota · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> nova lista de tarefas</div>' +
+      '<div><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> todos os comandos</div>';
     wrap.append(this.emptyState, this.grid.element, this.canvas.element);
 
     this.root.append(this.toolbar.element, wrap);
@@ -88,6 +95,7 @@ export class App {
     this.settings = state.settings;
     applyDocumentSettings(this.settings);
     this.recentDirs = state.recentDirs;
+    this.recentCommands = state.recentCommands;
     this.defaultDir = state.defaultDir;
     setHomeDir(state.homeDir);
     this.grid.setSizes(state.layoutSizes);
@@ -99,12 +107,17 @@ export class App {
       this.addTerminal(snapshot, state.terminalRects[snapshot.id] ?? null);
       this.trackAttention(snapshot);
     }
-    this.toolbar.setPendingSession(state.pendingSession.map((t) => t.name || t.cwd));
+    this.setPendingSession(state.pendingSession.map((t) => t.name || t.cwd));
     this.applyLayout(state.layout);
   }
 
+  private setPendingSession(names: string[]): void {
+    this.pendingSession = names.length;
+    this.toolbar.setPendingSession(names);
+  }
+
   private async restoreSession(): Promise<void> {
-    this.toolbar.setPendingSession([]);
+    this.setPendingSession([]);
     const { terminals, terminalRects } = await this.api.restoreSession();
     if (terminals.length === 0) return;
     for (const snapshot of terminals) this.addTerminal(snapshot, terminalRects[snapshot.id] ?? null);
@@ -115,7 +128,7 @@ export class App {
   }
 
   private async discardSession(): Promise<void> {
-    this.toolbar.setPendingSession([]);
+    this.setPendingSession([]);
     await this.api.discardSession();
   }
 
@@ -124,6 +137,8 @@ export class App {
       const pane = this.panes.get(snapshot.id);
       if (pane instanceof TerminalPane) pane.update(snapshot);
       this.trackAttention(snapshot);
+      // Renomear o terminal de destino atualiza o "Ctrl+Enter → nome" das notas.
+      if (snapshot.id === this.lastTerminalId) this.refreshSendTargets();
     });
     this.api.onTerminalClose((id) => this.removePane(id));
 
@@ -137,44 +152,157 @@ export class App {
     });
 
     window.addEventListener('keydown', (event) => {
-      if (!event.ctrlKey || event.altKey || event.metaKey) return;
-      const key = event.key.toLowerCase();
-
-      if (event.shiftKey && key === 't') {
-        event.preventDefault();
-        void this.promptNewTerminal();
-        return;
-      }
-      if (!event.shiftKey && key === 't' && !this.isTypingInTerminal(event)) {
-        event.preventDefault();
-        void this.promptNewTerminal();
-        return;
-      }
-      if (!event.shiftKey && key === ',') {
-        event.preventDefault();
-        void this.openSettings();
-        return;
-      }
-      if (event.shiftKey && key === 'n') {
-        event.preventDefault();
-        void this.createNote();
-        return;
-      }
-      if (event.shiftKey && key === 'l') {
-        event.preventDefault();
-        void this.createTaskList();
-        return;
-      }
-      if (event.shiftKey && key === 'w' && this.focusedId) {
-        event.preventDefault();
-        void this.closePane(this.focusedId);
-        return;
-      }
-      if (event.shiftKey && key === 'm' && this.focusedId) {
-        event.preventDefault();
-        this.board.toggleMaximize(this.focusedId);
-      }
+      if (event.key === 'Alt') document.body.classList.add('show-indexes');
+      const shortcut = matchShortcut(event, this.isTypingInTerminal(event));
+      if (!shortcut) return;
+      event.preventDefault();
+      this.runShortcut(shortcut);
     });
+    // Segurar Alt mostra o numero de cada painel (Alt+N vai direto para ele).
+    const hideIndexes = () => document.body.classList.remove('show-indexes');
+    window.addEventListener('keyup', (event) => {
+      if (event.key === 'Alt') hideIndexes();
+    });
+    window.addEventListener('blur', hideIndexes);
+  }
+
+  private runShortcut(shortcut: Shortcut): void {
+    switch (shortcut.kind) {
+      case 'new-terminal': return void this.promptNewTerminal();
+      case 'new-note': return void this.createNote();
+      case 'new-task-list': return void this.createTaskList();
+      case 'settings': return void this.openSettings();
+      case 'palette': return void this.openCommandPalette();
+      case 'next-attention': return this.goToNextAttention();
+      case 'focus-index': return this.goTo(this.order[shortcut.index]);
+      case 'focus-step': return this.stepFocus(shortcut.delta);
+      case 'close-pane':
+        if (this.focusedId) void this.closePane(this.focusedId);
+        return;
+      case 'maximize-pane':
+        if (this.focusedId) this.board.toggleMaximize(this.focusedId);
+        return;
+    }
+  }
+
+  /** Traz o painel para a tela (pagina/vista) e da foco a ele. */
+  private goTo(id: string | undefined): void {
+    if (!id || !this.panes.has(id)) return;
+    this.board.revealPane(id);
+    this.focus(id);
+  }
+
+  private stepFocus(delta: 1 | -1): void {
+    if (this.order.length === 0) return;
+    const current = this.focusedId ? this.order.indexOf(this.focusedId) : -1;
+    const next = current < 0
+      ? (delta > 0 ? 0 : this.order.length - 1)
+      : (current + delta + this.order.length) % this.order.length;
+    this.goTo(this.order[next]);
+  }
+
+  private async openCommandPalette(): Promise<void> {
+    if (this.dialogOpen) return;
+    this.dialogOpen = true;
+    const items: PaletteItem[] = this.order.map((id, index) => {
+      const pane = this.panes.get(id)!;
+      return {
+        label: paneLabel(pane),
+        detail: paneDetail(pane),
+        hint: index < 9 ? `Alt+${index + 1}` : undefined,
+        attention: this.attention.has(id),
+        run: () => this.goTo(id),
+      };
+    });
+    const focused = this.focusedId;
+    items.push(
+      { label: 'Novo terminal', hint: 'Ctrl+Shift+T', run: () => void this.promptNewTerminal() },
+      { label: 'Nova nota', hint: 'Ctrl+Shift+N', run: () => void this.createNote() },
+      { label: 'Nova lista de tarefas', hint: 'Ctrl+Shift+L', run: () => void this.createTaskList() },
+    );
+    if (this.attention.size > 0) {
+      items.push({ label: 'Proximo terminal aguardando', hint: 'Ctrl+Shift+A', attention: true, run: () => this.goToNextAttention() });
+    }
+    if (focused) {
+      items.push(
+        { label: 'Maximizar / restaurar painel em foco', hint: 'Ctrl+Shift+M', run: () => this.board.toggleMaximize(focused) },
+        { label: 'Fechar painel em foco', hint: 'Ctrl+Shift+W', run: () => void this.closePane(focused) },
+      );
+    }
+    if (this.pendingSession > 0) {
+      items.push({ label: `Restaurar sessao anterior (${this.pendingSession})`, run: () => void this.restoreSession() });
+    }
+    for (const layout of LAYOUT_NAMES) {
+      items.push({ label: `Layout: ${layout.name}`, run: () => this.setLayout(layout.id) });
+    }
+    items.push({ label: 'Configuracoes', hint: 'Ctrl+,', run: () => void this.openSettings() });
+
+    try {
+      await openPalette(items, 'Ir para um painel ou executar um comando…');
+    } finally {
+      this.dialogOpen = false;
+    }
+    // Fechou sem escolher (Esc): o foco volta para onde estava.
+    if (this.focusedId === focused && focused) this.panes.get(focused)?.focus();
+  }
+
+  /**
+   * Manda texto de uma nota/tarefa para um terminal: o ultimo usado, ou um
+   * escolhido na hora. Devolve o nome do terminal, ou `null` se nao mandou.
+   */
+  private async sendToTerminal(text: string, pick: boolean): Promise<string | null> {
+    const terminals = this.order
+      .map((id) => this.panes.get(id))
+      .filter((pane): pane is TerminalPane => pane instanceof TerminalPane);
+    if (terminals.length === 0) {
+      window.alert('Nenhum terminal aberto para receber o texto.');
+      return null;
+    }
+
+    const last = this.lastTerminalId ? this.panes.get(this.lastTerminalId) : undefined;
+    const target = last instanceof TerminalPane && !pick ? last : await this.pickTerminal(terminals);
+    if (!target) return null;
+    if (target.id !== this.lastTerminalId) this.setLastTerminal(target.id);
+
+    target.send(text);
+    return target.name;
+  }
+
+  /** Paleta so com os terminais; devolve o escolhido (`null` se cancelar). */
+  private async pickTerminal(terminals: TerminalPane[]): Promise<TerminalPane | null> {
+    if (this.dialogOpen) return null;
+    const origin = this.focusedId;
+    const chosen: { pane: TerminalPane | null } = { pane: null };
+    this.dialogOpen = true;
+    try {
+      await openPalette(terminals.map((pane) => ({
+        label: pane.name,
+        detail: paneDetail(pane),
+        attention: this.attention.has(pane.id),
+        run: () => {
+          chosen.pane = pane;
+        },
+      })), 'Enviar para qual terminal?');
+    } finally {
+      this.dialogOpen = false;
+    }
+    // Quem pediu o envio (nota/lista) continua com o foco.
+    if (origin) this.panes.get(origin)?.focus();
+    return chosen.pane;
+  }
+
+  private setLastTerminal(id: string | null): void {
+    this.lastTerminalId = id;
+    this.refreshSendTargets();
+  }
+
+  /** Notas e listas mostram para qual terminal o Ctrl+Enter / ▶ vai. */
+  private refreshSendTargets(): void {
+    const pane = this.lastTerminalId ? this.panes.get(this.lastTerminalId) : undefined;
+    const name = pane instanceof TerminalPane ? pane.name : null;
+    for (const other of this.panes.values()) {
+      if (other instanceof NotePane || other instanceof TaskPane) other.setSendTarget(name);
+    }
   }
 
   /**
@@ -190,10 +318,13 @@ export class App {
     if (this.dialogOpen) return;
     this.dialogOpen = true;
     try {
-      const spec = await openNewTerminalDialog(this.api, this.recentDirs, this.defaultDir);
+      const spec = await openNewTerminalDialog(this.api, this.recentDirs, this.defaultDir, this.recentCommands);
       if (!spec) return;
       const snapshot = await this.api.createTerminal(spec);
       this.rememberDir(snapshot.cwd);
+      if (snapshot.command) {
+        this.recentCommands = [snapshot.command, ...this.recentCommands.filter((c) => c !== snapshot.command)].slice(0, 8);
+      }
       this.addTerminal(snapshot);
       this.showNew(snapshot.id);
     } finally {
@@ -294,8 +425,7 @@ export class App {
     for (let i = 0; i < this.order.length; i += 1) {
       const id = this.order[(start + i) % this.order.length]!;
       if (!this.attention.has(id)) continue;
-      this.board.revealPane(id);
-      this.focus(id);
+      this.goTo(id);
       return;
     }
   }
@@ -320,12 +450,20 @@ export class App {
         this.board.toggleMaximize(id);
         this.focus(id);
       },
+      onSend: (text: string, pick: boolean) => this.sendToTerminal(text, pick),
     };
   }
 
   private addPane(pane: Panel): void {
     this.panes.set(pane.id, pane);
     this.order.push(pane.id);
+    if (pane instanceof TerminalPane) {
+      // O primeiro terminal ja vira destino; os demais so quando ganham foco.
+      if (!this.lastTerminalId) this.setLastTerminal(pane.id);
+    } else if (pane instanceof NotePane || pane instanceof TaskPane) {
+      const target = this.lastTerminalId ? this.panes.get(this.lastTerminalId) : undefined;
+      pane.setSendTarget(target instanceof TerminalPane ? target.name : null);
+    }
   }
 
   private removePane(id: string): void {
@@ -339,6 +477,10 @@ export class App {
     if (position >= 0) this.order.splice(position, 1);
     pane.dispose();
     if (this.focusedId === id) this.focusedId = null;
+    if (this.lastTerminalId === id) {
+      const next = [...this.order].reverse().find((other) => this.panes.get(other) instanceof TerminalPane);
+      this.setLastTerminal(next ?? null);
+    }
     this.sync();
   }
 
@@ -366,6 +508,7 @@ export class App {
       return;
     }
     this.focusedId = id;
+    if (this.panes.get(id) instanceof TerminalPane && this.lastTerminalId !== id) this.setLastTerminal(id);
     for (const [paneId, pane] of this.panes) pane.setFocused(paneId === id);
     this.panes.get(id)?.focus();
     this.acknowledge(id);
@@ -387,6 +530,37 @@ export class App {
     this.grid.element.hidden = !hasPanes || this.board !== this.grid;
     this.canvas.element.hidden = this.board !== this.canvas;
     this.board.setPanes(this.order.map((id) => this.panes.get(id)!).filter(Boolean));
+    this.order.forEach((id, index) => {
+      const header = this.panes.get(id)?.header;
+      if (!header) return;
+      if (index < 9) header.dataset.index = String(index + 1);
+      else delete header.dataset.index;
+    });
     this.updatePaging();
   }
+}
+
+const LAYOUT_NAMES: Array<{ id: LayoutId; name: string }> = [
+  { id: '1', name: '1 painel' },
+  { id: '2', name: '2 lado a lado' },
+  { id: '3', name: '3 paineis' },
+  { id: '4', name: 'grade 2x2' },
+  { id: '6', name: 'grade 3x2' },
+  { id: '8', name: 'grade 4x2' },
+  { id: 'free', name: 'area livre' },
+];
+
+function paneLabel(pane: Panel): string {
+  if (pane instanceof TerminalPane) return pane.name;
+  return pane.header.querySelector('.pane-name')?.textContent || 'painel';
+}
+
+function paneDetail(pane: Panel): string {
+  if (pane instanceof TerminalPane) {
+    const { cwd, command, notice } = pane.info;
+    return notice ? `🔔 ${notice}` : `terminal · ${shortenPath(cwd)}${command ? ` · ${command}` : ''}`;
+  }
+  if (pane instanceof NotePane) return 'nota';
+  if (pane instanceof TaskPane) return 'tarefas';
+  return '';
 }

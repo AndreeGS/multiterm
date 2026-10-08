@@ -1,4 +1,4 @@
-import { type AppConfig, withRecentDir } from '../../domain/workspace/config.js';
+import { type AppConfig, withRecentCommand, withRecentDir } from '../../domain/workspace/config.js';
 import type { CanvasView, GridLayoutId, LayoutId, TrackSizes } from '../../domain/workspace/layout.js';
 import type { SavedTerminal, WindowBounds } from '../../domain/workspace/config.js';
 import type { Settings } from '../../domain/workspace/settings.js';
@@ -58,6 +58,12 @@ export class WorkspaceService {
 
   rememberDir(dir: string): void {
     this.config = withRecentDir(this.config, dir);
+    this.scheduleSave();
+  }
+
+  rememberCommand(command: string): void {
+    if (!command) return;
+    this.config = withRecentCommand(this.config, command);
     this.scheduleSave();
   }
 

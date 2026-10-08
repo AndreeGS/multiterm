@@ -5,6 +5,7 @@ import type { TerminalSnapshot } from '../../domain/terminal/types.js';
 import type { CanvasRect } from '../../domain/workspace/layout.js';
 import type { MultiTermApi } from '../../shared/contract.js';
 import { shortenPath } from '../paths.js';
+import { matchShortcut } from '../shortcuts.js';
 import { MIN_CONTRAST, TERMINAL_THEMES, type Appearance } from '../theme.js';
 import { beginRename, button, el, type Panel } from './panel.js';
 
@@ -44,6 +45,7 @@ export class TerminalPane implements Panel {
   /** Fonte escolhida nas configuracoes e zoom da area livre; o xterm usa o produto. */
   private fontSize: number;
   private scale = 1;
+  private sending: Promise<void> = Promise.resolve();
 
   constructor(
     snapshot: TerminalSnapshot,
@@ -136,12 +138,48 @@ export class TerminalPane implements Panel {
   update(snapshot: TerminalSnapshot): void {
     this.snapshot = snapshot;
     this.nameEl.textContent = snapshot.name;
-    this.cwdEl.textContent = shortenPath(snapshot.cwd);
-    this.cwdEl.title = `${snapshot.cwd}  (${snapshot.shell})`;
+    // Um pedido explicito do agente toma o lugar do diretorio ate voce olhar.
+    const place = shortenPath(snapshot.cwd) + (snapshot.command ? ` · ${snapshot.command}` : '');
+    this.cwdEl.textContent = snapshot.notice ? `🔔 ${snapshot.notice}` : place;
+    this.cwdEl.title = `${snapshot.cwd}  (${snapshot.shell})` +
+      (snapshot.command ? `\nComando inicial: ${snapshot.command}` : '');
     this.dot.dataset.status = snapshot.status;
     this.element.classList.toggle('attention', snapshot.needsAttention);
+    this.element.classList.toggle('notice', snapshot.notice !== null);
     this.dot.title = STATUS_LABEL[snapshot.status] +
       (snapshot.exitCode !== null ? ` (codigo ${snapshot.exitCode})` : '');
+  }
+
+  get name(): string {
+    return this.snapshot.name;
+  }
+
+  get info(): TerminalSnapshot {
+    return this.snapshot;
+  }
+
+  /**
+   * Manda um texto como se voce tivesse digitado e aperta Enter. Varias linhas
+   * vao como colagem (bracketed paste quando o programa pede, como o Claude
+   * Code), para virarem um prompt so em vez de um Enter por linha.
+   */
+  send(text: string): void {
+    const body = text.replace(/\s+$/, '');
+    if (!body) return;
+    // Em fila: dois Ctrl+Enter seguidos nao podem intercalar texto e Enter.
+    this.sending = this.sending.then(async () => {
+      if (!body.includes('\n')) {
+        this.api.writeTerminal(this.id, `${body}\r`);
+        return;
+      }
+      this.term.paste(body);
+      // TUIs tratam o Enter colado ao fim da colagem como parte dela; um respiro resolve.
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      this.api.writeTerminal(this.id, '\r');
+    });
+    this.element.classList.remove('received');
+    void this.element.offsetWidth; // reinicia a animacao
+    this.element.classList.add('received');
   }
 
   setMaximized(maximized: boolean): void {
@@ -209,6 +247,8 @@ export class TerminalPane implements Panel {
 
   private handleKey(event: KeyboardEvent): boolean {
     if (event.type !== 'keydown') return true;
+    // Atalho do app: o xterm nao repassa ao shell, e o App (no window) executa.
+    if (matchShortcut(event, true)) return false;
     const mod = event.ctrlKey && event.shiftKey;
     // Ctrl+Shift+C/V: copiar/colar sem colidir com Ctrl+C (SIGINT) do shell.
     if (mod && event.code === 'KeyC') {

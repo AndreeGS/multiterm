@@ -8,6 +8,8 @@ export interface NoteCallbacks {
   onFocus(id: string): void;
   onMaximize(id: string): void;
   onClose(id: string): void;
+  /** Manda texto ao terminal: o ultimo usado, ou um escolhido na hora (`pick`). */
+  onSend(text: string, pick: boolean): void;
 }
 
 /**
@@ -22,6 +24,8 @@ export class NotePane implements Panel {
   private readonly editor: HTMLTextAreaElement;
   private readonly maximizeBtn: HTMLButtonElement;
   private note: Note;
+  /** Terminal que recebe o Ctrl+Enter (o ultimo em foco). */
+  private sendTarget: string | null = null;
   private fontSize: number;
   private scale = 1;
 
@@ -56,7 +60,16 @@ export class NotePane implements Panel {
 
     const actions = el('div', 'pane-actions');
     this.maximizeBtn = button('⤢', 'Maximizar / restaurar', () => this.callbacks.onMaximize(this.id));
+    const sendBtn = button('▶', '', () => this.sendCurrent(false));
+    sendBtn.title = 'Enviar a selecao (ou a linha do cursor) ao terminal — Ctrl+Enter\n' +
+      'Shift+clique ou Ctrl+Shift+Enter: escolher o terminal';
+    sendBtn.addEventListener('click', (event) => {
+      if (!event.shiftKey) return;
+      event.stopImmediatePropagation();
+      this.sendCurrent(true);
+    }, { capture: true });
     actions.append(
+      sendBtn,
       button('⧉', 'Copiar tudo', () => void navigator.clipboard.writeText(this.editor.value)),
       this.maximizeBtn,
       button('✕', 'Fechar e apagar nota', () => this.callbacks.onClose(this.id)),
@@ -139,13 +152,45 @@ export class NotePane implements Panel {
     this.element.remove();
   }
 
+  /** Nome do terminal que recebe o Ctrl+Enter; mostrado no cabecalho. */
+  setSendTarget(name: string | null): void {
+    this.sendTarget = name;
+    this.render();
+  }
+
+  /**
+   * Envia a selecao; sem selecao, a linha do cursor — e desce o cursor para a
+   * proxima, para mandar um roteiro de comandos linha a linha.
+   */
+  private sendCurrent(pick: boolean): void {
+    const { value, selectionStart: from, selectionEnd: to } = this.editor;
+    let text: string;
+    if (from !== to) {
+      text = value.slice(from, to);
+    } else {
+      const start = value.lastIndexOf('\n', from - 1) + 1;
+      const newline = value.indexOf('\n', from);
+      const end = newline < 0 ? value.length : newline;
+      text = value.slice(start, end);
+      const next = newline < 0 ? end : end + 1;
+      this.editor.setSelectionRange(next, next);
+    }
+    if (text.trim()) this.callbacks.onSend(text, pick);
+  }
+
   private render(): void {
     this.nameEl.textContent = this.note.title;
     const lines = this.note.content ? this.note.content.split('\n').length : 0;
-    this.infoEl.textContent = `nota · ${lines} ${lines === 1 ? 'linha' : 'linhas'}`;
+    this.infoEl.textContent = `nota · ${lines} ${lines === 1 ? 'linha' : 'linhas'}` +
+      (this.sendTarget ? ` · Ctrl+Enter → ${this.sendTarget}` : '');
   }
 
   private handleKey(event: KeyboardEvent): void {
+    if (event.key === 'Enter' && event.ctrlKey && !event.altKey && !event.metaKey) {
+      event.preventDefault();
+      this.sendCurrent(event.shiftKey);
+      return;
+    }
     // Tab indenta em vez de tirar o foco do editor. execCommand preserva o Ctrl+Z.
     if (event.key === 'Tab' && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
       event.preventDefault();

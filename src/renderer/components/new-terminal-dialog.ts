@@ -2,14 +2,18 @@ import type { TerminalSpec } from '../../domain/terminal/types.js';
 import type { MultiTermApi } from '../../shared/contract.js';
 import { shortenPath } from '../paths.js';
 
+/** Sugestoes fixas; os comandos que voce usou aparecem antes delas. */
+const COMMAND_PRESETS = ['claude', 'claude --continue', 'codex', 'npm run dev'];
+
 /**
- * Dialogo de criacao. Nada e executado aqui: apenas coleta nome + diretorio.
- * Resolve com `null` se o usuario cancelar.
+ * Dialogo de criacao. Nada e executado aqui: apenas coleta diretorio, comando
+ * inicial e nome. Resolve com `null` se o usuario cancelar.
  */
 export function openNewTerminalDialog(
   api: MultiTermApi,
   recentDirs: string[],
   defaultDir: string,
+  recentCommands: string[],
 ): Promise<TerminalSpec | null> {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
@@ -26,6 +30,10 @@ export function openNewTerminalDialog(
         </span>
       </label>
       <div class="recent" id="recent"></div>
+      <label>Comando inicial (opcional)
+        <input type="text" id="command" spellcheck="false" placeholder="so o shell — ex.: claude, npm run dev" />
+      </label>
+      <div class="recent" id="commands"></div>
       <label>Nome (opcional)
         <input type="text" id="name" spellcheck="false" placeholder="derivado do diretorio" />
       </label>
@@ -40,6 +48,8 @@ export function openNewTerminalDialog(
     const dirInput = modal.querySelector<HTMLInputElement>('#dir')!;
     const nameInput = modal.querySelector<HTMLInputElement>('#name')!;
     const recentBox = modal.querySelector<HTMLElement>('#recent')!;
+    const commandInput = modal.querySelector<HTMLInputElement>('#command')!;
+    const commandsBox = modal.querySelector<HTMLElement>('#commands')!;
 
     dirInput.value = defaultDir;
 
@@ -50,9 +60,22 @@ export function openNewTerminalDialog(
       chip.title = dir;
       chip.addEventListener('click', () => {
         dirInput.value = dir;
-        nameInput.focus();
+        commandInput.focus();
       });
       recentBox.appendChild(chip);
+    }
+
+    const commands = [...recentCommands, ...COMMAND_PRESETS.filter((c) => !recentCommands.includes(c))];
+    for (const command of commands) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.textContent = command;
+      chip.title = `Ao abrir, digita "${command}" no shell (e de novo a cada reinicio)`;
+      chip.addEventListener('click', () => {
+        commandInput.value = command;
+        nameInput.focus();
+      });
+      commandsBox.appendChild(chip);
     }
 
     let settled = false;
@@ -70,7 +93,7 @@ export function openNewTerminalDialog(
         dirInput.focus();
         return;
       }
-      close({ cwd, name: nameInput.value.trim() });
+      close({ cwd, name: nameInput.value.trim(), command: commandInput.value.trim() });
     };
 
     const onKey = (event: KeyboardEvent) => {
@@ -78,7 +101,8 @@ export function openNewTerminalDialog(
         event.stopPropagation();
         close(null);
       }
-      if (event.key === 'Enter' && document.activeElement !== recentBox) {
+      // Enter num chip escolhe o chip; nos campos, cria o terminal.
+      if (event.key === 'Enter' && !(document.activeElement instanceof HTMLButtonElement)) {
         event.stopPropagation();
         submit();
       }

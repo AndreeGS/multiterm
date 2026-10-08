@@ -8,6 +8,8 @@ export interface TaskCallbacks {
   onFocus(id: string): void;
   onMaximize(id: string): void;
   onClose(id: string): void;
+  /** Manda texto ao terminal: o ultimo usado, ou um escolhido na hora (`pick`). */
+  onSend(text: string, pick: boolean): Promise<string | null>;
 }
 
 /**
@@ -29,6 +31,9 @@ export class TaskPane implements Panel {
   private readonly clearBtn: HTMLButtonElement;
   private readonly maximizeBtn: HTMLButtonElement;
   private list: TaskList;
+  /** Tarefas ja mandadas a um agente nesta sessao (id -> nome do terminal). */
+  private readonly sent = new Map<string, string>();
+  private sendTarget: string | null = null;
   private doneCollapsed = false;
   /** Item sendo arrastado para reordenar. */
   private draggingId: string | null = null;
@@ -158,6 +163,19 @@ export class TaskPane implements Panel {
     this.element.remove();
   }
 
+  /** Nome do terminal que recebe o ▶ das tarefas. */
+  setSendTarget(name: string | null): void {
+    this.sendTarget = name;
+    this.render();
+  }
+
+  private async send(item: TaskItem, pick: boolean): Promise<void> {
+    const target = await this.callbacks.onSend(item.text, pick);
+    if (!target) return;
+    this.sent.set(item.id, target);
+    this.render();
+  }
+
   private applyFontSize(): void {
     // Tudo dentro do corpo e em `em`: muda a fonte aqui e o resto acompanha.
     this.body.style.fontSize = `${(this.fontSize + 0.5) * this.scale}px`;
@@ -261,7 +279,28 @@ export class TaskPane implements Panel {
       : 'Duplo clique para editar';
     text.addEventListener('dblclick', () => this.beginEdit(row, text, item));
 
-    row.append(check, text, button('✕', 'Apagar tarefa', () => this.remove(item.id)));
+    const target = this.sent.get(item.id);
+    if (target && !item.done) {
+      row.classList.add('sent');
+      const badge = el('span', 'tasks-sent');
+      badge.textContent = `→ ${target}`;
+      badge.title = `Enviada para ${target}`;
+      row.append(check, text, badge);
+    } else {
+      row.append(check, text);
+    }
+    if (!item.done) {
+      const sendBtn = button('▶', '', () => void this.send(item, false));
+      sendBtn.className = 'tasks-send';
+      sendBtn.title = `Enviar como prompt para ${this.sendTarget ?? 'um terminal'}\nShift+clique: escolher o terminal`;
+      sendBtn.addEventListener('click', (event) => {
+        if (!event.shiftKey) return;
+        event.stopImmediatePropagation();
+        void this.send(item, true);
+      }, { capture: true });
+      row.append(sendBtn);
+    }
+    row.append(button('✕', 'Apagar tarefa', () => this.remove(item.id)));
     if (sortable) this.makeSortable(row, item.id);
     return row;
   }

@@ -23,6 +23,8 @@
   --primary-fg: var(--fg);
   --input-bg: #0d0f15;
   --attention-bg: #2a2416;
+  --notice: #c38bff;
+  --notice-bg: #261c33;
   --canvas-dot: #262b3a;
   --overlay: rgba(5, 7, 12, 0.65);
   --shadow: rgba(0, 0, 0, 0.45);
@@ -55,6 +57,8 @@
   --primary-fg: #fbf6ea;
   --input-bg: #fbf6ea;
   --attention-bg: #f3dfb0;
+  --notice: #8a3fb8;
+  --notice-bg: #ecd7ee;
   --canvas-dot: #cbb791;
   --overlay: rgba(60, 45, 25, 0.35);
   --shadow: rgba(80, 55, 25, 0.22);
@@ -392,8 +396,37 @@ body.dragging .drag-handle { cursor: grabbing; }
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.45; transform: scale(0.8); }
 }
+/* Pedido explicito do agente (BEL / OSC 9, 777, 99): mais forte que o silencio. */
+.pane.notice { border-color: var(--notice); }
+.pane.notice .pane-header { background: var(--notice-bg); }
+.pane.notice .pane-cwd { color: var(--notice); font-weight: 600; }
+.pane.notice .status-dot { background: var(--notice); box-shadow: 0 0 6px var(--notice); }
+
+/* Texto chegou de uma nota/tarefa: o cabecalho pisca uma vez. */
+.pane.received .pane-header { animation: received 0.7s ease-out; }
+@keyframes received {
+  from { box-shadow: inset 0 0 0 999px var(--layout-fill); }
+  to { box-shadow: inset 0 0 0 999px transparent; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pane.attention .status-dot { animation: none; }
+  .pane.received .pane-header { animation: none; }
+}
+
+/* Segurando Alt: o numero de cada painel (Alt+N vai direto para ele). */
+body.show-indexes .pane-header[data-index]::before {
+  content: attr(data-index);
+  flex: none;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  font-weight: 700;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
 }
 
 .attention-btn {
@@ -584,6 +617,17 @@ body.dragging .drag-handle { cursor: grabbing; }
 }
 .tasks-item:hover button { visibility: visible; }
 .tasks-item button:hover { color: var(--error); }
+.tasks-item button.tasks-send:hover { color: var(--accent); }
+.tasks-sent {
+  flex: none;
+  max-width: 40%;
+  font-size: 0.8em;
+  line-height: 1.75;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .tasks-list.done .tasks-text {
   color: var(--fg-dim);
   text-decoration: line-through;
@@ -740,3 +784,40 @@ body.dragging .drag-handle { cursor: grabbing; }
 .segmented button { flex: 1; font-variant-numeric: tabular-nums; }
 .segmented button.active { background: var(--primary-bg); border-color: var(--primary-border); color: var(--primary-fg); }
 .modal-actions .spacer { flex: 1; }
+
+/* ---------- paleta de comandos ---------- */
+.palette-overlay { place-items: start center; padding-top: 12vh; }
+.modal.palette { width: min(600px, calc(90vw / var(--ui-zoom))); padding: 10px; gap: 8px; }
+.palette input[type="text"] { font-size: 14px; }
+.palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.palette-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 9px;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.palette-item.selected { background: var(--hover-bg); }
+.palette-item.attention .palette-label::before { content: '● '; color: var(--idle); }
+.palette-label { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-detail {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette-item kbd {
+  font: 11px ui-monospace, Menlo, monospace;
+  color: var(--fg-dim);
+}
+.palette-empty { padding: 8px 9px; color: var(--fg-dim); font-style: italic; }
