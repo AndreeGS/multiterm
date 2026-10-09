@@ -1,14 +1,11 @@
 import { build } from 'esbuild';
-import { cpSync, mkdirSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const out = resolve(root, 'dist');
 const watch = process.argv.includes('--watch');
-
-rmSync(out, { recursive: true, force: true });
-mkdirSync(out, { recursive: true });
 
 const common = {
   bundle: true,
@@ -18,6 +15,28 @@ const common = {
   logLevel: 'info',
   minify: process.env.NODE_ENV === 'production',
 };
+
+// Testes unitarios (npm test): so o dominio e afins, rodam no Node puro com
+// `node --test`. Nao apaga o resto do dist — o app continua utilizavel.
+if (process.argv.includes('--tests')) {
+  const unitDir = resolve(root, 'src/test/unit');
+  const unitOut = resolve(out, 'test/unit');
+  rmSync(unitOut, { recursive: true, force: true });
+  await build({
+    ...common,
+    logLevel: 'warning',
+    entryPoints: readdirSync(unitDir)
+      .filter((file) => file.endsWith('.test.ts'))
+      .map((file) => resolve(unitDir, file)),
+    outdir: unitOut,
+    platform: 'node',
+    external: ['electron', 'node-pty'],
+  });
+  process.exit(0);
+}
+
+rmSync(out, { recursive: true, force: true });
+mkdirSync(out, { recursive: true });
 
 await Promise.all([
   // Main e preload rodam em Node: electron e node-pty ficam externos
