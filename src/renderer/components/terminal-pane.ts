@@ -257,8 +257,11 @@ export class TerminalPane implements Panel {
       return false;
     }
     if (mod && event.code === 'KeyV') {
+      // Sem o preventDefault o Chromium tambem cola nativamente (Ctrl+Shift+V e
+      // "colar sem formatacao") no textarea do xterm, e o texto entrava duas vezes.
+      event.preventDefault();
       void navigator.clipboard.readText().then((text) => {
-        if (text) this.api.writeTerminal(this.id, text);
+        if (text) this.term.paste(text);
       });
       return false;
     }
