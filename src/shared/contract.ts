@@ -2,7 +2,7 @@
  * Contrato entre main e renderer. Compartilhado pelos tres bundles
  * (main, preload, renderer) para manter o IPC tipado em um lugar so.
  */
-import type { TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js';
+import type { ReplaySnapshot, TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js';
 import type { UsageSummary } from '../domain/usage/types.js';
 import type { Note, NotePatch } from '../domain/notes/note.js';
 import type { CanvasText, CanvasTextPatch } from '../domain/canvas/text.js';
@@ -53,7 +53,7 @@ export interface MultiTermApi {
   writeTerminal(id: string, data: string): void;
   resizeTerminal(id: string, cols: number, rows: number): void;
   /** Output retido, para preencher o xterm ao anexar. */
-  replayTerminal(id: string): Promise<string>;
+  replayTerminal(id: string): Promise<ReplaySnapshot>;
   /** Persiste a posicao do terminal na area livre. */
   setTerminalRect(id: string, rect: CanvasRect | null): void;
 
@@ -89,11 +89,15 @@ export interface MultiTermApi {
   getUsage(): Promise<UsageSummary>;
   refreshUsage(): void;
 
-  onTerminalData(listener: (id: string, chunk: string) => void): () => void;
+  /** Output de todos os terminais, agrupado a cada ~16ms: `[id, data, seq]`. */
+  onTerminalData(listener: (batch: TerminalOutput[]) => void): () => void;
   onTerminalUpdate(listener: (snapshot: TerminalSnapshot) => void): () => void;
   onTerminalClose(listener: (id: string) => void): () => void;
   onUsageUpdate(listener: (summary: UsageSummary) => void): () => void;
 }
+
+/** Output de um terminal num lote; `seq` e o do ultimo chunk incluido. */
+export type TerminalOutput = readonly [id: string, data: string, seq: number];
 
 export const CHANNELS = {
   bootstrap: 'app:bootstrap',

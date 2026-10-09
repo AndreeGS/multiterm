@@ -150,6 +150,13 @@ export class App {
   }
 
   private bindGlobalEvents(): void {
+    // Uma assinatura so para o output de todos os terminais, roteada pelo id.
+    this.api.onTerminalData((batch) => {
+      for (const [id, data, seq] of batch) {
+        const pane = this.panes.get(id);
+        if (pane instanceof TerminalPane) pane.write(data, seq);
+      }
+    });
     this.api.onTerminalUpdate((snapshot) => {
       const pane = this.panes.get(snapshot.id);
       const renamed = pane instanceof TerminalPane && pane.name !== snapshot.name;

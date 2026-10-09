@@ -39,8 +39,14 @@ export class TerminalPane implements Panel {
   private readonly cwdEl: HTMLElement;
   private readonly maximizeBtn: HTMLButtonElement;
   private readonly observer: ResizeObserver;
-  private readonly unsubscribe: Array<() => void> = [];
   private snapshot: TerminalSnapshot;
+  /**
+   * Output ao vivo que chega antes do replay: fica aqui ate o replay ser
+   * escrito, e so entra o que for mais novo que ele. `null` = ja hidratado.
+   */
+  private early: Array<[data: string, seq: number]> | null = [];
+  /** `seq` do ultimo chunk escrito no xterm. */
+  private lastSeq = 0;
   private lastSize = { cols: 0, rows: 0 };
   /** Fonte escolhida nas configuracoes e zoom da area livre; o xterm usa o produto. */
   private fontSize: number;
@@ -110,12 +116,6 @@ export class TerminalPane implements Panel {
 
     this.observer = new ResizeObserver(() => this.refit());
     this.observer.observe(body);
-
-    this.unsubscribe.push(
-      this.api.onTerminalData((id, chunk) => {
-        if (id === this.id) this.term.write(chunk);
-      }),
-    );
 
     this.update(snapshot);
     void this.hydrate();
@@ -231,8 +231,18 @@ export class TerminalPane implements Panel {
     }
   }
 
+  /** Output ao vivo do pty, roteado pelo App. */
+  write(data: string, seq: number): void {
+    if (this.early) {
+      this.early.push([data, seq]);
+      return;
+    }
+    if (seq <= this.lastSeq) return;
+    this.lastSeq = seq;
+    this.term.write(data);
+  }
+
   dispose(): void {
-    for (const off of this.unsubscribe) off();
     this.observer.disconnect();
     this.term.dispose();
     this.element.remove();
@@ -240,8 +250,13 @@ export class TerminalPane implements Panel {
 
   /** Carrega o output ja produzido antes deste painel existir. */
   private async hydrate(): Promise<void> {
-    const buffered = await this.api.replayTerminal(this.id);
-    if (buffered) this.term.write(buffered);
+    const replay = await this.api.replayTerminal(this.id);
+    if (replay.data) this.term.write(replay.data);
+    this.lastSeq = replay.seq;
+    const early = this.early ?? [];
+    this.early = null;
+    // O que chegou enquanto o replay vinha ja pode estar dentro dele.
+    for (const [data, seq] of early) this.write(data, seq);
     this.refit();
   }
 

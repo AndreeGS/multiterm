@@ -241,15 +241,24 @@ describe('TerminalSession', () => {
     factory.fail = true;
     const s = session();
     assert.equal(last().status, 'error');
-    assert.match(s.replayBuffer(), /sem shell/);
+    assert.match(s.replayBuffer().data, /sem shell/);
   });
 
   it('replay guarda o output recente', () => {
     const s = session();
     factory.last.emit('a');
     factory.last.emit('b');
-    assert.equal(s.replayBuffer(), 'ab');
+    assert.deepEqual(s.replayBuffer(), { data: 'ab', seq: 2 });
     assert.deepEqual(data, ['a', 'b']);
+  });
+
+  it('seq continua crescendo depois do restart', () => {
+    const s = session();
+    factory.last.emit('a');
+    s.restart();
+    factory.spawned[0]!.exit(0);
+    factory.last.emit('b');
+    assert.deepEqual(s.replayBuffer(), { data: 'b', seq: 2 });
   });
 
   it('replay descarta os chunks mais antigos acima do limite', () => {
@@ -257,7 +266,7 @@ describe('TerminalSession', () => {
     const big = 'x'.repeat(200 * 1024);
     factory.last.emit(big);
     factory.last.emit(big);
-    assert.equal(s.replayBuffer(), big);
+    assert.equal(s.replayBuffer().data, big);
   });
 
   it('restart mata o pty, limpa o replay e sobe outro', () => {
@@ -268,7 +277,7 @@ describe('TerminalSession', () => {
     assert.ok(first.killed);
     first.exit(0);
     assert.equal(factory.spawned.length, 2);
-    assert.equal(s.replayBuffer(), '');
+    assert.equal(s.replayBuffer().data, '');
     assert.notEqual(last().status, 'exited');
   });
 
