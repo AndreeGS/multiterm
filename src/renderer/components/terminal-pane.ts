@@ -2,12 +2,15 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import type { TerminalSnapshot } from '../../domain/terminal/types.js';
+import { totalTokens, type UsageTotals } from '../../domain/usage/types.js';
 import type { CanvasRect } from '../../domain/workspace/layout.js';
 import type { MultiTermApi } from '../../shared/contract.js';
 import { shortenPath } from '../paths.js';
 import { matchShortcut } from '../shortcuts.js';
 import { MIN_CONTRAST, TERMINAL_THEMES, type Appearance } from '../theme.js';
+import { openColorMenu, paneColorVar } from './color-menu.js';
 import { beginRename, button, el, type Panel } from './panel.js';
+import { formatTokens, money } from './usage-bar.js';
 
 const STATUS_LABEL: Record<TerminalSnapshot['status'], string> = {
   starting: 'iniciando',
@@ -38,9 +41,18 @@ export class TerminalPane implements Panel {
   private readonly nameEl: HTMLElement;
   private readonly cwdEl: HTMLElement;
   private readonly maximizeBtn: HTMLButtonElement;
+  private readonly colorBtn: HTMLButtonElement;
+  private readonly usageEl: HTMLElement;
+  private usage: UsageTotals | null = null;
   private readonly observer: ResizeObserver;
-  private readonly unsubscribe: Array<() => void> = [];
   private snapshot: TerminalSnapshot;
+  /**
+   * Output ao vivo que chega antes do replay: fica aqui ate o replay ser
+   * escrito, e so entra o que for mais novo que ele. `null` = ja hidratado.
+   */
+  private early: Array<[data: string, seq: number]> | null = [];
+  /** `seq` do ultimo chunk escrito no xterm. */
+  private lastSeq = 0;
   private lastSize = { cols: 0, rows: 0 };
   /** Fonte escolhida nas configuracoes e zoom da area livre; o xterm usa o produto. */
   private fontSize: number;
@@ -77,14 +89,20 @@ export class TerminalPane implements Panel {
     this.maximizeBtn = button('⤢', 'Maximizar / restaurar', () =>
       this.callbacks.onMaximize(this.id),
     );
+    this.colorBtn = button('●', 'Cor do terminal', () => void this.pickColor());
+    this.colorBtn.classList.add('color-btn');
     actions.append(
+      this.colorBtn,
       button('■', 'Interromper (Ctrl+C)', () => void this.api.interruptTerminal(this.id)),
       button('⟳', 'Reiniciar shell', () => void this.api.restartTerminal(this.id)),
       this.maximizeBtn,
       button('✕', 'Fechar terminal', () => this.callbacks.onClose(this.id)),
     );
 
-    header.append(this.dot, title, actions);
+    this.usageEl = el('span', 'pane-usage');
+    this.usageEl.hidden = true;
+
+    header.append(this.dot, title, this.usageEl, actions);
 
     const body = el('div', 'pane-body');
     this.element.append(header, body);
@@ -111,12 +129,6 @@ export class TerminalPane implements Panel {
     this.observer = new ResizeObserver(() => this.refit());
     this.observer.observe(body);
 
-    this.unsubscribe.push(
-      this.api.onTerminalData((id, chunk) => {
-        if (id === this.id) this.term.write(chunk);
-      }),
-    );
-
     this.update(snapshot);
     void this.hydrate();
   }
@@ -139,19 +151,26 @@ export class TerminalPane implements Panel {
     this.snapshot = snapshot;
     this.nameEl.textContent = snapshot.name;
     // Um pedido explicito do agente toma o lugar do diretorio ate voce olhar.
-    const place = shortenPath(snapshot.cwd) + (snapshot.command ? ` · ${snapshot.command}` : '');
-    this.cwdEl.textContent = snapshot.notice ? `🔔 ${snapshot.notice}` : place;
+    this.cwdEl.textContent = snapshot.notice ? `🔔 ${snapshot.notice}` : terminalPlace(snapshot);
     this.cwdEl.title = `${snapshot.cwd}  (${snapshot.shell})` +
+      (snapshot.worktree ? `\nWorktree da branch ${snapshot.worktree.branch}, de ${snapshot.worktree.repo}` : '') +
       (snapshot.command ? `\nComando inicial: ${snapshot.command}` : '');
     this.dot.dataset.status = snapshot.status;
     this.element.classList.toggle('attention', snapshot.needsAttention);
     this.element.classList.toggle('notice', snapshot.notice !== null);
+    this.element.classList.toggle('colored', snapshot.color !== null);
+    if (snapshot.color) this.element.style.setProperty('--pane-accent', paneColorVar(snapshot.color));
+    else this.element.style.removeProperty('--pane-accent');
     this.dot.title = STATUS_LABEL[snapshot.status] +
       (snapshot.exitCode !== null ? ` (codigo ${snapshot.exitCode})` : '');
   }
 
   get name(): string {
     return this.snapshot.name;
+  }
+
+  get workspaceId(): string {
+    return this.snapshot.workspaceId;
   }
 
   get info(): TerminalSnapshot {
@@ -231,8 +250,46 @@ export class TerminalPane implements Panel {
     }
   }
 
+  /**
+   * Consumo da conversa do Claude deste terminal (`null` = sem conversa ou
+   * nada gravado ainda). Vem do resumo de uso, atualizado a cada minuto.
+   */
+  setUsage(usage: UsageTotals | null): void {
+    this.usage = usage;
+    this.usageEl.hidden = usage === null;
+    if (!usage) return;
+    this.usageEl.textContent = this.usageText ?? '';
+    this.usageEl.title =
+      `Conversa do Claude neste terminal (${usage.requests} respostas)\n` +
+      `entrada ${formatTokens(usage.inputTokens)} · saida ${formatTokens(usage.outputTokens)}\n` +
+      `cache: escrita ${formatTokens(usage.cacheWriteTokens)} · leitura ${formatTokens(usage.cacheReadTokens)}\n` +
+      'Custo estimado pela tabela publica da API.';
+  }
+
+  /** `48k · US$ 0,62`, ou `null` sem consumo. */
+  get usageText(): string | null {
+    return this.usage ? `${formatTokens(totalTokens(this.usage))} · ${money(this.usage.costUsd)}` : null;
+  }
+
+  /** Abre o menu de cores sob o botao ● do cabecalho. */
+  async pickColor(): Promise<void> {
+    const color = await openColorMenu(this.colorBtn, this.snapshot.color);
+    if (color !== undefined) await this.api.setTerminalColor(this.id, color);
+    this.focus();
+  }
+
+  /** Output ao vivo do pty, roteado pelo App. */
+  write(data: string, seq: number): void {
+    if (this.early) {
+      this.early.push([data, seq]);
+      return;
+    }
+    if (seq <= this.lastSeq) return;
+    this.lastSeq = seq;
+    this.term.write(data);
+  }
+
   dispose(): void {
-    for (const off of this.unsubscribe) off();
     this.observer.disconnect();
     this.term.dispose();
     this.element.remove();
@@ -240,8 +297,13 @@ export class TerminalPane implements Panel {
 
   /** Carrega o output ja produzido antes deste painel existir. */
   private async hydrate(): Promise<void> {
-    const buffered = await this.api.replayTerminal(this.id);
-    if (buffered) this.term.write(buffered);
+    const replay = await this.api.replayTerminal(this.id);
+    if (replay.data) this.term.write(replay.data);
+    this.lastSeq = replay.seq;
+    const early = this.early ?? [];
+    this.early = null;
+    // O que chegou enquanto o replay vinha ja pode estar dentro dele.
+    for (const [data, seq] of early) this.write(data, seq);
     this.refit();
   }
 
@@ -267,4 +329,11 @@ export class TerminalPane implements Panel {
     }
     return true;
   }
+}
+
+/** `~/repo.worktrees/feat-x · ⎇ feat-x · claude`: onde roda, em que branch isolada, o que roda. */
+export function terminalPlace(snapshot: TerminalSnapshot): string {
+  return shortenPath(snapshot.cwd) +
+    (snapshot.worktree ? ` · ⎇ ${snapshot.worktree.branch}` : '') +
+    (snapshot.command ? ` · ${snapshot.command}` : '');
 }

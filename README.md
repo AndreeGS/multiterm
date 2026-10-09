@@ -64,7 +64,8 @@ npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 | `Ctrl+Shift+P` | Paleta: ir para qualquer painel ou executar qualquer acao |
 | `Alt+1` … `Alt+9` | Ir direto para o painel N (segurar `Alt` mostra os numeros) |
 | `Ctrl+PageDown` / `Ctrl+PageUp` | Painel seguinte / anterior |
-| `Ctrl+Shift+A` | Proximo terminal aguardando voce |
+| `Ctrl+Shift+A` | Proximo terminal aguardando voce (troca de workspace se preciso) |
+| `Ctrl+Shift+O` | Workspaces: trocar, criar, renomear, apagar |
 | `Ctrl+Enter` (numa nota) | Envia a selecao ou a linha do cursor ao terminal vinculado |
 | `Ctrl+,` | Configuracoes (tema e tamanho da fonte) |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copiar / colar (o `Ctrl+C` puro continua sendo SIGINT) |
@@ -79,6 +80,35 @@ A paleta (`Ctrl+Shift+P`) lista os paineis abertos (os que pedem atencao com
 Botoes de cada painel: `■` interromper (Ctrl+C), `⟳` reiniciar o shell,
 `⤢` maximizar, `✕` fechar.
 
+## Workspaces
+
+Conjuntos nomeados de terminais, notas, tarefas, textos e grupos ("Projeto X",
+"Infra", "Estudos"), cada um com o **seu layout, as suas proporcoes e a sua
+vista da area livre**. O botao `▤ <nome>` na barra (ou `Ctrl+Shift+O`) abre a
+lista de workspaces:
+
+- clicar no nome troca para ele; o campo embaixo cria um novo (e ja troca);
+- `✎` renomeia ali mesmo, na linha (`Enter` salva, `Esc` cancela);
+- `🗑` pede confirmacao na propria linha, dizendo o que vai junto.
+
+- **Trocar nao fecha nada.** Os terminais dos outros workspaces continuam
+  rodando e avisando: o `● N aguardando` conta todos, o `▤` ganha um `●`
+  quando o aviso e de outro workspace, e percorrer os avisos (`Ctrl+Shift+A`)
+  troca de workspace sozinho;
+- tudo que voce cria nasce no workspace em uso. Para levar um painel para
+  outro: paleta, `Mover "<painel>" para outro workspace…`;
+- a paleta (`Ctrl+Shift+P`) tem `Workspace: <nome>` para trocar direto e
+  abre a lista de workspaces; ela tambem lista primeiro os paineis do workspace em uso e
+  depois os dos outros (com `▤ <workspace>`); escolher um troca para la.
+  `Alt+N` e `Ctrl+PageUp/PageDown` ficam no workspace em uso;
+- vincular nota/lista so oferece terminais do workspace em uso;
+- **apagar** um workspace fecha os terminais dele e apaga notas, listas,
+  textos e grupos. Da para apagar qualquer um, nao so o em uso; o ultimo nao
+  pode ser apagado.
+
+Quem ja usava o app antes dos workspaces cai num workspace **Principal** com
+tudo que tinha, no layout e na vista de antes.
+
 ## Comando inicial
 
 O dialogo de novo terminal tem um campo **Comando inicial** (ex.: `claude`,
@@ -88,13 +118,71 @@ digitado — com o PATH, aliases e rc de sempre. Ele aparece no cabecalho
 (`~/projeto · claude`) e:
 
 - roda de novo a cada `⟳` (reiniciar);
-- e salvo com a sessao. Ao **restaurar**, um `claude` volta como
-  `claude --continue`, retomando a ultima conversa daquele diretorio — so se
-  existir conversa salva em `~/.claude/projects` (ou `$CLAUDE_CONFIG_DIR`), e
-  so se o comando ja nao escolher uma (`-c`, `--resume`, `-p`...).
+- e salvo com a sessao.
+
+Cada terminal com `claude` tem **a sua conversa**. O app escolhe um id para
+ela e digita `claude --session-id <id>` na primeira vez. Ao reiniciar (`⟳`)
+ou restaurar a sessao, digita `claude --resume <id>`, voltando exatamente
+para a conversa daquele terminal, mesmo com varios no mesmo diretorio. No
+cabecalho continua aparecendo so `claude`. Comandos que ja escolhem a conversa
+(`-c`, `--resume`, `-p`...) ficam como voce escreveu. Terminais salvos por
+versoes anteriores, sem id, voltam como `claude --continue`, e so se existir
+conversa salva para o diretorio em `~/.claude/projects` (ou `$CLAUDE_CONFIG_DIR`).
 
 O comando inicial nao arma o aviso de ocioso: um agente recem-aberto esperando
 instrucao nao e motivo de alerta.
+
+## Worktree por terminal
+
+Para deixar um agente trabalhar sem mexer na sua copia do repositorio: no
+dialogo de novo terminal, quando o diretorio esta num repositorio git, aparece
+**Worktree isolado**. Marcando, voce escolhe a branch (sugerida a partir do
+nome do terminal) e o app:
+
+- cria o worktree em `<pai>/<repo>.worktrees/<branch>`, ao lado do repo (fora
+  dele, nada para por no `.gitignore`), com a branch nova a partir do HEAD.
+  Se a branch ja existe, usa ela; se ja tem um worktree, reaproveita;
+- abre o terminal la dentro. O cabecalho mostra `⎇ <branch>`.
+
+Ao fechar (`✕`) um terminal com worktree, o app pergunta se remove a pasta,
+avisando se ha mudancas nao commitadas. **A branch nunca e apagada**: o que foi
+commitado continua no repositorio. Se outro terminal ainda esta no mesmo
+worktree, nem pergunta. Na paleta: `Fechar "<terminal>" e remover o worktree`.
+
+Um template salvo com worktree guarda o diretorio do repo; abrir o template
+mostra o dialogo preenchido, pedindo so a branch.
+
+O app chama o `git` da maquina sempre com argumentos em lista, sem shell, e
+com `core.fsmonitor` desligado (o dialogo consulta o git em qualquer diretorio
+digitado). Para remover, confere antes que a pasta e mesmo um worktree daquele
+repo e nao a copia principal.
+
+## Templates
+
+Um template guarda diretorio, comando inicial, nome e cor de um terminal que
+voce abre sempre (ex.: "API dev", "Claude no front"):
+
+- no dialogo de novo terminal, marque **Salvar como template**. Sem nome
+  digitado, o template leva o nome que o terminal ganhou. Salvar de novo com o
+  mesmo nome substitui o anterior;
+- o `▾` ao lado de `+ Terminal` lista os templates e abre direto, sem dialogo;
+- a paleta (`Ctrl+Shift+P`) tem `Novo: <template>` e `Apagar template: <nome>`;
+- no dialogo, os templates aparecem como chips no topo e preenchem o
+  formulario, para ajustar antes de criar.
+
+Ficam no `config.json`, no maximo 20 (salvar o 21o descarta o mais antigo).
+
+## Cor do terminal
+
+O `●` no cabecalho escolhe uma cor de destaque (ou nenhuma). Ela aparece como
+uma faixa a esquerda do cabecalho, em qualquer layout, e pinta a linha de
+vinculo na area livre — menos quando o terminal esta aguardando ou com pedido
+explicito: ai a linha usa a cor do estado, que e o que pede acao. A cor tambem
+pode ser escolhida no dialogo de novo terminal, vem do template e e salva com
+a sessao. Na paleta: `Cor de "<terminal>"`.
+
+As cores sao chaves (`blue`, `green`...), e cada tema define o tom em
+`--pane-<cor>` no `styles.css`.
 
 ## Configuracoes
 
@@ -166,6 +254,24 @@ Para titulos e anotacoes rapidas no quadro, sem abrir um bloco de notas:
   Um texto que fica vazio some sozinho;
 - os textos ficam sempre por baixo dos paineis, acompanham o zoom e entram no
   `Ajustar`. So aparecem na area livre — nas grades nao ha onde po-los.
+
+#### Grupos
+
+Uma moldura com titulo que junta paineis e textos de um mesmo assunto ("API",
+"Front", "Infra"):
+
+- o botao `▭` na barra de zoom (ou `Novo grupo na area livre` na paleta) cria
+  uma moldura no meio da vista; arraste os paineis para dentro;
+- **arrastar o titulo move o grupo inteiro**: vai junto todo painel e texto
+  com o centro dentro da moldura no momento do arrasto. Pertencer e so isso,
+  nao ha vinculo guardado: tirar um painel do grupo e arrasta-lo para fora;
+- a quina inferior direita redimensiona so a moldura; duplo clique no titulo
+  renomeia; passando o mouse no titulo aparecem a cor (`●`) e o `✕`, que apaga
+  a moldura sem tocar nos paineis;
+- o corpo da moldura deixa o mouse passar: arrastar e dar duplo clique dentro
+  dela funciona como no fundo (move a vista, cria texto);
+- molduras ficam por baixo de textos e paineis, entram no `Ajustar` e sao
+  salvas em `frames.json`. Nas grades nao aparecem.
 
 Ao abrir o app, se havia terminais na sessao anterior, aparece o botao
 **⟲ Restaurar sessao (N)** na barra: ele reabre cada terminal com o mesmo nome,
@@ -310,8 +416,15 @@ A barra superior agrega as transcricoes locais do Claude Code
 custo estimado de hoje e dos ultimos 7 dias. O tooltip abre o detalhe por
 modelo; clicar atualiza na hora (tambem atualiza sozinho a cada minuto).
 
+**Por terminal**: o cabecalho de cada terminal com `claude` mostra o consumo
+da conversa dele (`90k · US$ 0,18`, com o detalhe no tooltip), e a paleta
+repete o numero. Conta a conversa inteira, inclusive subagentes. Limitacao:
+`/clear` ou `/resume` dentro do Claude troca de conversa, e dali em diante o
+numero do terminal para de acompanhar.
+
 Leitura incremental — cada arquivo e lido so a partir de onde parou, em
-streaming, e arquivos sem escrita recente sao ignorados. Na pratica: ~150ms na
+streaming, e arquivos sem escrita recente sao ignorados. Uma linha que ainda
+esta sendo escrita fica para a proxima passada. Na pratica: ~150ms na
 primeira passada e ~4ms nas seguintes, sem travar a interface.
 
 **Isto e consumo, nao percentual do limite do plano.** O quanto do limite
@@ -323,20 +436,30 @@ tokens, mas nao custo, e sao listados no tooltip.
 
 ## Persistencia
 
-Quatro arquivos em `app.getPath('userData')` (`~/.config/MultiTerm/` no Linux),
+Cinco arquivos em `app.getPath('userData')` (`~/.config/MultiTerm/` no Linux),
 todos com escrita atomica, sem banco de dados:
 
-- `config.json`: tamanho/posicao da janela, layout escolhido, proporcoes das
-  divisorias de cada grade, diretorios e comandos recentes, terminais abertos
-  (nome, diretorio, shell, comando inicial, posicao), a vista da area livre e as configuracoes de
+- `config.json`: tamanho/posicao da janela, os workspaces (nome, layout,
+  proporcoes das divisorias de cada grade, vista da area livre) e o em uso,
+  diretorios e comandos recentes, terminais abertos (nome, diretorio, shell,
+  comando inicial, cor, workspace, posicao), templates e as configuracoes de
   aparencia;
 - `notes.json`: as notas (titulo, texto, posicao na area livre e terminal
   vinculado);
 - `texts.json`: os textos soltos da area livre (conteudo, posicao, tamanho);
+- `frames.json`: as molduras (grupos) da area livre (titulo, cor, retangulo);
 - `tasks.json`: as listas de tarefas (titulo, itens, posicao na area livre e
   terminal vinculado).
 
+Notas, listas, textos e grupos guardam o workspace a que pertencem.
+
 O historico (scrollback) e os processos dos terminais nao sao persistidos.
+
+## Dialogos
+
+Confirmacoes e avisos sao modais do proprio app, nunca `window.confirm` ou
+`window.alert`: no Electron eles bloqueiam a janela e, no Linux, podem nem
+aparecer, deixando o app travado esperando um clique impossivel.
 
 ## Arquitetura
 
@@ -345,20 +468,22 @@ src/
   domain/          regras e tipos, sem Electron e sem node-pty
     terminal/      TerminalSession (ciclo de vida, atividade, replay), porta Pty,
                    comando inicial e deteccao de BEL/OSC de notificacao
-    workspace/     layouts (templates, divisorias) e formato do config.json
+    workspace/     workspaces, layouts (templates, divisorias), templates de
+                   terminal, cores e formato do config.json
     notes/         formato e validacao das notas
-    canvas/        formato e validacao dos textos soltos
+    canvas/        textos soltos e molduras (grupos) da area livre
     tasks/         formato e validacao das listas de tarefas
+    git/           worktrees: porta Git, caminho, nome de branch, parse do porcelain
   application/     casos de uso (orquestram o dominio)
     terminal/      TerminalService — unico dono do conjunto de sessoes
-    workspace/     WorkspaceService — preferencias, com save debounced
+    workspace/     WorkspaceService — workspaces e preferencias, com save debounced
     notes/         NotesService — notas, com save debounced
-    canvas/        TextsService — textos soltos, com save debounced
+    canvas/        TextsService e FramesService, com save debounced
     tasks/         TasksService — listas de tarefas, com save debounced
   infrastructure/  adaptadores concretos
     terminal/      NodePtyFactory implementa a porta Pty
     persistence/   JsonConfigStore, JsonNotesStore, JsonTextsStore,
-                   JsonTasksStore (escrita atomica)
+                   JsonTasksStore, JsonFramesStore (escrita atomica)
   main/            processo principal do Electron: janela + IPC + wiring
   renderer/        UI: paineis (terminal, nota, tarefas), grade, area livre, toolbar
   shared/          contrato de IPC tipado, compartilhado pelos tres bundles
@@ -372,16 +497,20 @@ Regras que mantem o acoplamento baixo:
 - Testes unitarios ficam em `src/test/unit/*.test.ts`. O `npm test` empacota
   cada arquivo com esbuild (os imports `.js` apontam para `.ts`, o que o Node
   sozinho nao resolve) e roda com `node --test`.
+- O output dos ptys cruza o IPC em lotes de ~16ms (`main/output-batcher.ts`),
+  com uma entrada por terminal, e o `App` entrega cada uma ao painel pelo id.
+  Cada chunk tem um `seq`; o replay diz ate qual `seq` ja trouxe, e o painel
+  descarta o que chegou ao vivo e ja estava nele (nada aparece duplicado ao
+  reabrir um painel).
 - O renderer nao tem acesso a Node: `contextIsolation` ligado e uma API unica
   exposta pelo `preload`, tipada em `shared/contract.ts`.
 - Nada e executado automaticamente. O app so sobe o shell que voce pediu, no
-  diretorio que voce escolheu.
+  diretorio que voce escolheu. O unico outro processo e o `git`, e so quando
+  voce pede um worktree (porta `Git` em `domain/git`, adaptador `GitCli`).
 
 ## Proximos passos naturais
 
 - Atividade mais precisa lendo o processo em foreground do PTY
   (`IPty.process` no Unix) em vez de so o fluxo de bytes.
-- Rotear o output por um `Map<id, painel>` em vez de cada painel filtrar todos
-  os chunks, e agrupar os `webContents.send` em janelas de ~16ms.
 - Confirmacao ao fechar um terminal com processo em execucao.
 - Busca no scrollback (`@xterm/addon-search`).

@@ -261,7 +261,7 @@ body.dragging .pane-body { pointer-events: none; user-select: none; }
 .canvas.panning { cursor: grabbing; }
 .canvas-texts { position: absolute; left: 0; top: 0; }
 /* Com textos no quadro, ele ja nao esta "vazio": o aviso so atrapalharia. */
-.grid-wrap:has(.canvas:not([hidden]) .canvas-text) .empty { display: none; }
+.grid-wrap:has(.canvas:not([hidden]) .canvas-text:not([hidden])) .empty { display: none; }
 
 /* ---------- textos soltos ---------- */
 .canvas-text {
@@ -881,3 +881,200 @@ body.show-indexes .pane-header[data-index]::before {
 body.linking, body.linking * { cursor: crosshair !important; }
 body.linking .pane-body { pointer-events: none; user-select: none; }
 .pane.link-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+
+/* ---------- cor por terminal ---------- */
+:root {
+  --pane-blue: #5b9cf5;
+  --pane-green: #3fb970;
+  --pane-amber: #e0a43a;
+  --pane-red: #ef6461;
+  --pane-purple: #b48cf2;
+  --pane-teal: #3cc6c0;
+  --pane-gray: #8b93a7;
+}
+:root[data-theme="paper"] {
+  --pane-blue: #2f63a8;
+  --pane-green: #3d7a2c;
+  --pane-amber: #a8670c;
+  --pane-red: #b03a2e;
+  --pane-purple: #7b3fa8;
+  --pane-teal: #1f7f7a;
+  --pane-gray: #7a6c58;
+}
+/* Faixa a esquerda do cabecalho: nao disputa com a borda de aguardando/pedido. */
+.pane.colored .pane-header { box-shadow: inset 4px 0 0 var(--pane-accent); }
+.pane-actions .color-btn { color: var(--border); }
+.pane.colored .pane-actions .color-btn { color: var(--pane-accent); }
+
+.swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+/* `button.swatch` + :hover:not(:disabled): vence o hover generico dos botoes. */
+button.swatch,
+button.swatch:hover:not(:disabled) {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--swatch);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+button.swatch.none,
+button.swatch.none:hover:not(:disabled) {
+  background: linear-gradient(135deg, transparent 45%, var(--fg-dim) 45% 55%, transparent 55%), var(--input-bg);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+button.swatch:hover:not(:disabled) { border-color: var(--hover-border); }
+button.swatch.selected,
+button.swatch.selected:hover:not(:disabled) { border-color: var(--fg); }
+.color-menu {
+  position: fixed;
+  z-index: 100002;
+  padding: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px var(--shadow);
+}
+
+/* ---------- templates ---------- */
+.modal .field { display: flex; align-items: center; gap: 10px; }
+.field-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+}
+.recent .template-chip {
+  font: 12px ui-sans-serif, system-ui, sans-serif;
+  color: var(--fg);
+  border-left: 3px solid var(--chip-color, var(--border));
+}
+.split-btn { display: flex; }
+.split-btn > button:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.split-btn > .templates-btn {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left-color: var(--bg);
+  padding: 4px 6px;
+}
+
+/* ---------- consumo da conversa do terminal ---------- */
+.pane-usage {
+  flex: none;
+  font-size: 11px;
+  color: var(--fg-dim);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- worktree ---------- */
+.worktree-row { display: flex; flex-direction: column; gap: 6px; }
+.modal .worktree-row input[type="text"]:disabled { opacity: 0.45; }
+.modal input[type="text"].invalid { border-color: var(--error); }
+.wt-hint { font-size: 11px; color: var(--fg-dim); }
+
+/* ---------- grupos (molduras) na area livre ---------- */
+.canvas-frames { position: absolute; left: 0; top: 0; }
+.grid-wrap:has(.canvas:not([hidden]) .canvas-frame:not([hidden])) .empty { display: none; }
+.canvas-frame {
+  --frame-color: var(--fg-dim);
+  position: absolute;
+  /* O corpo deixa o mouse passar: pan e duplo clique funcionam dentro do grupo. */
+  pointer-events: none;
+  border: 1.5px solid color-mix(in srgb, var(--frame-color) 70%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--frame-color) 6%, transparent);
+}
+.canvas-frame-title {
+  pointer-events: auto;
+  position: absolute;
+  left: 10px;
+  bottom: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--frame-color);
+  cursor: grab;
+  white-space: nowrap;
+}
+.canvas-frame-tools { display: none; gap: 2px; }
+.canvas-frame-title:hover .canvas-frame-tools { display: flex; }
+.canvas-frame-tools button {
+  padding: 1px 6px;
+  font-size: 11px;
+  background: var(--bg-header);
+  color: var(--fg-dim);
+  line-height: 1.3;
+}
+.canvas-frame-tools .canvas-frame-color { color: var(--frame-color); }
+.canvas-frame-title .rename-input { font: inherit; width: 16em; }
+.canvas-frame-resize {
+  pointer-events: auto;
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  border-right: 2px solid var(--frame-color);
+  border-bottom: 2px solid var(--frame-color);
+  border-bottom-right-radius: 12px;
+  opacity: 0.35;
+}
+.canvas-frame:has(.canvas-frame-title:hover) .canvas-frame-resize,
+.canvas-frame-resize:hover { opacity: 1; }
+
+/* ---------- workspaces ---------- */
+.workspace-btn {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-btn.attention::after { content: ' ●'; color: var(--idle); }
+
+/* ---------- confirmacao e aviso (no lugar dos dialogos nativos) ---------- */
+.dialog-overlay { z-index: 200; }
+.modal.dialog { width: min(440px, calc(90vw / var(--ui-zoom))); gap: 12px; }
+.dialog-message { margin: 0; white-space: pre-line; color: var(--fg-dim); line-height: 1.5; }
+button.primary.danger,
+button.primary.danger:hover:not(:disabled) { background: var(--error); border-color: var(--error); color: #fff; }
+
+/* ---------- gerenciador de workspaces ---------- */
+.modal.workspaces { width: min(560px, calc(90vw / var(--ui-zoom))); gap: 10px; }
+.workspace-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow-y: auto; }
+.workspace-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--radius);
+  min-height: 34px;
+}
+.workspace-row:hover { background: var(--hover-bg); }
+.workspace-row.active { box-shadow: inset 3px 0 0 var(--accent); }
+.workspace-row .workspace-name {
+  flex: none;
+  max-width: 45%;
+  border-color: transparent;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.workspace-detail { flex: 1; font-size: 11px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.workspace-detail.waiting { color: var(--idle); }
+.workspace-row .icon-btn { border-color: transparent; padding: 2px 7px; color: var(--fg-dim); }
+.workspace-row .icon-btn:hover:not(:disabled) { color: var(--fg); }
+.workspace-row .icon-btn.danger:hover:not(:disabled) { color: var(--error); }
+.workspace-rename, .workspace-create { display: flex; gap: 6px; flex: 1; }
+.workspace-rename input, .workspace-create input { flex: 1; }
+.workspace-confirm { flex: 1; font-size: 12px; }
+.workspace-create { padding-top: 8px; border-top: 1px solid var(--border); }

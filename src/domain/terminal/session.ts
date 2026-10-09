@@ -1,13 +1,20 @@
 import { basename } from 'node:path';
-import { cleanCommand } from './command.js';
+import { parseWorktreeInfo, type WorktreeInfo } from '../git/worktree.js';
+import { parsePaneColor, type PaneColor } from '../workspace/colors.js';
+import { parseWorkspaceId } from '../workspace/workspace.js';
+import { claudeLaunchCommand, cleanCommand, parseSessionId, sessionIdOf, wantsOwnSession } from './command.js';
 import type { Pty, PtyFactory } from './pty.js';
 import { SignalScanner } from './signals.js';
-import type { TerminalSize, TerminalSnapshot, TerminalSpec, TerminalStatus } from './types.js';
+import type { ReplaySnapshot, TerminalSize, TerminalSnapshot, TerminalSpec, TerminalStatus } from './types.js';
 
 export interface SessionEvents {
-  onData(id: string, chunk: string): void;
+  /** `seq` cresce a cada chunk, inclusive entre restarts. */
+  onData(id: string, chunk: string, seq: number): void;
   onUpdate(snapshot: TerminalSnapshot): void;
 }
+
+/** Porta: a conversa do Claude com este id ja foi gravada em disco? */
+export type TranscriptCheck = (sessionId: string) => boolean;
 
 const DEFAULT_SIZE: TerminalSize = { cols: 80, rows: 24 };
 /** Silencio apos o qual um terminal "running" passa a "idle". */
@@ -27,6 +34,12 @@ export class TerminalSession {
   private cwd: string;
   private shell: string;
   private command: string;
+  private color: PaneColor | null;
+  private readonly claudeSession: string | null;
+  private readonly worktree: WorktreeInfo | null;
+  private workspaceId: string;
+  /** O que de fato e digitado no shell (o comando com a conversa escolhida). */
+  private launch = '';
   private status: TerminalStatus = 'starting';
   private exitCode: number | null = null;
   private size: TerminalSize = DEFAULT_SIZE;
@@ -35,6 +48,8 @@ export class TerminalSession {
   private idleTimer: NodeJS.Timeout | null = null;
   private replay: string[] = [];
   private replayBytes = 0;
+  /** Numero do ultimo chunk emitido. */
+  private seq = 0;
   private pendingRestart = false;
   private attention = false;
   private disposed = false;
@@ -50,11 +65,20 @@ export class TerminalSession {
     spec: TerminalSpec,
     private readonly ptys: PtyFactory,
     private readonly events: SessionEvents,
+    private readonly hasTranscript: TranscriptCheck = () => false,
   ) {
     this.id = id;
     this.cwd = spec.cwd;
     this.shell = spec.shell?.trim() || ptys.defaultShell();
     this.command = cleanCommand(spec.command);
+    this.color = parsePaneColor(spec.color);
+    this.worktree = parseWorktreeInfo(spec.worktree);
+    this.workspaceId = parseWorkspaceId(spec.workspaceId);
+    // Um `claude` puro ganha a conversa que o servico escolheu; um que ja
+    // escolhe a sua por id (`--resume X`) so e acompanhado.
+    this.claudeSession = wantsOwnSession(this.command)
+      ? parseSessionId(spec.claudeSession)
+      : sessionIdOf(this.command);
     this.name = spec.name.trim() || basename(spec.cwd) || 'terminal';
   }
 
@@ -65,6 +89,10 @@ export class TerminalSession {
       cwd: this.cwd,
       shell: this.shell,
       command: this.command || null,
+      color: this.color,
+      claudeSession: this.claudeSession,
+      worktree: this.worktree,
+      workspaceId: this.workspaceId,
       status: this.status,
       exitCode: this.exitCode,
       createdAt: this.createdAt,
@@ -74,8 +102,8 @@ export class TerminalSession {
   }
 
   /** Output recente, para popular a UI quando ela (re)anexa a sessao. */
-  replayBuffer(): string {
-    return this.replay.join('');
+  replayBuffer(): ReplaySnapshot {
+    return { data: this.replay.join(''), seq: this.seq };
   }
 
   isAlive(): boolean {
@@ -88,7 +116,8 @@ export class TerminalSession {
 
     this.exitCode = null;
     this.scanner = new SignalScanner();
-    this.commandPending = this.command.length > 0;
+    this.launch = this.launchCommand();
+    this.commandPending = this.launch.length > 0;
     this.setStatus('starting');
 
     try {
@@ -100,16 +129,14 @@ export class TerminalSession {
       });
     } catch (error) {
       this.pty = null;
-      this.pushReplay(`\r\n\x1b[31mFalha ao iniciar "${this.shell}": ${errorMessage(error)}\x1b[0m\r\n`);
-      this.events.onData(this.id, this.replay[this.replay.length - 1]!);
+      this.emitData(`\r\n\x1b[31mFalha ao iniciar "${this.shell}": ${errorMessage(error)}\x1b[0m\r\n`);
       this.setStatus('error');
       return;
     }
 
     this.pty.onData((chunk) => {
       if (this.disposed) return;
-      this.pushReplay(chunk);
-      this.events.onData(this.id, chunk);
+      this.emitData(chunk);
       const signal = this.scanner.scan(chunk);
       this.markActive();
       if (signal) this.raiseNotice(signal);
@@ -118,7 +145,7 @@ export class TerminalSession {
         // como se voce tivesse digitado. Nao arma o aviso de ocioso — um
         // agente recem-aberto esperando instrucao nao e novidade para ninguem.
         this.commandPending = false;
-        this.pty?.write(`${this.command}\r`);
+        this.pty?.write(`${this.launch}\r`);
       }
     });
 
@@ -171,6 +198,18 @@ export class TerminalSession {
     this.emitUpdate();
   }
 
+  moveToWorkspace(workspaceId: string): void {
+    if (workspaceId === this.workspaceId) return;
+    this.workspaceId = workspaceId;
+    this.emitUpdate();
+  }
+
+  setColor(color: PaneColor | null): void {
+    if (color === this.color) return;
+    this.color = color;
+    this.emitUpdate();
+  }
+
   /** Mata o pty e sobe um novo, preservando id, nome e cwd. */
   restart(cwd?: string): void {
     if (cwd) this.cwd = cwd;
@@ -200,6 +239,12 @@ export class TerminalSession {
     } catch {
       // processo ja morreu
     }
+  }
+
+  /** Decidido a cada start: depois que a conversa existe, reiniciar a retoma. */
+  private launchCommand(): string {
+    if (!this.claudeSession || !wantsOwnSession(this.command)) return this.command;
+    return claudeLaunchCommand(this.command, this.claudeSession, this.hasTranscript(this.claudeSession));
   }
 
   private markActive(): void {
@@ -255,6 +300,12 @@ export class TerminalSession {
   private clearIdleTimer(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = null;
+  }
+
+  private emitData(chunk: string): void {
+    this.seq += 1;
+    this.pushReplay(chunk);
+    this.events.onData(this.id, chunk, this.seq);
   }
 
   private pushReplay(chunk: string): void {

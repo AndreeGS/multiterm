@@ -15,11 +15,11 @@ const rect = { x: 0, y: 0, width: 100, height: 50 };
 
 describe('notas', () => {
   it('createNote: titulo vazio vira "Nota"', () => {
-    assert.equal(createNote('n', '   ', 1).title, 'Nota');
+    assert.equal(createNote('n', '   ', 'w', 1).title, 'Nota');
   });
 
   it('patch: titulo vazio mantem o anterior; null remove vinculo e posicao', () => {
-    const note = { ...createNote('n', 'Roteiro', 1), terminalId: 'abc', rect };
+    const note = { ...createNote('n', 'Roteiro', 'w', 1), terminalId: 'abc', rect };
     const next = applyNotePatch(note, { title: ' ', terminalId: null, rect: null, content: 'oi' }, 2);
     assert.equal(next.title, 'Roteiro');
     assert.equal(next.terminalId, null);
@@ -29,7 +29,7 @@ describe('notas', () => {
   });
 
   it('patch com undefined nao mexe no campo', () => {
-    const note = { ...createNote('n', 'x', 1), terminalId: 'abc' };
+    const note = { ...createNote('n', 'x', 'w', 1), terminalId: 'abc' };
     assert.equal(applyNotePatch(note, {}, 2).terminalId, 'abc');
   });
 
@@ -55,14 +55,14 @@ describe('listas de tarefas', () => {
   });
 
   it('createTaskList comeca vazia', () => {
-    const list = createTaskList('l', '', 1);
+    const list = createTaskList('l', '', 'w', 1);
     assert.equal(list.title, 'Tarefas');
     assert.deepEqual(list.items, []);
   });
 
   it('itens: ids repetidos ficam com o primeiro, sem texto sao descartados', () => {
     const list = applyTaskListPatch(
-      createTaskList('l', 'x', 1),
+      createTaskList('l', 'x', 'w', 1),
       { items: [item('a', 'um'), item('a', 'repetido'), item('b', '   '), item('c', 'tres')] },
       2,
     );
@@ -89,11 +89,11 @@ describe('listas de tarefas', () => {
 
 describe('textos soltos', () => {
   it('createCanvasText usa o tamanho padrao', () => {
-    assert.equal(createCanvasText('t', 1, 2, 0).fontSize, DEFAULT_TEXT_SIZE);
+    assert.equal(createCanvasText('t', 1, 2, 'w', 0).fontSize, DEFAULT_TEXT_SIZE);
   });
 
   it('patch so aceita tamanhos da escala e numeros finitos', () => {
-    const text = createCanvasText('t', 1, 2, 0);
+    const text = createCanvasText('t', 1, 2, 'w', 0);
     const next = applyTextPatch(text, { fontSize: 13, x: Number.NaN, y: 7 }, 1);
     assert.equal(next.fontSize, DEFAULT_TEXT_SIZE);
     assert.equal(next.x, 1);

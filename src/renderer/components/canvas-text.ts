@@ -49,6 +49,10 @@ export class CanvasTextItem {
     return this.text.id;
   }
 
+  get workspaceId(): string {
+    return this.text.workspaceId;
+  }
+
   /** Retangulo no mundo, para o "Ajustar" enquadrar os textos tambem. */
   get worldRect(): CanvasRect {
     return {
@@ -57,6 +61,18 @@ export class CanvasTextItem {
       width: this.element.offsetWidth / this.zoom,
       height: this.element.offsetHeight / this.zoom,
     };
+  }
+
+  /** Posicao no mundo. */
+  get position(): { x: number; y: number } {
+    return { x: this.text.x, y: this.text.y };
+  }
+
+  /** Movido junto com um grupo: so a tela muda; `commit` grava a posicao final. */
+  moveTo(x: number, y: number, commit = false): void {
+    this.text = { ...this.text, x, y };
+    this.place(this.zoom);
+    if (commit) this.callbacks.onChange(this.id, { x, y });
   }
 
   place(zoom: number): void {

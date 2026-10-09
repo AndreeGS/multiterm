@@ -127,6 +127,7 @@ describe('config', () => {
       name: 'api',
       cwd: '/srv',
       command: 'claude',
+      workspaceId: 'default',
       rect: { x: 0, y: 0, width: 10, height: 10 },
     });
   });

@@ -1,17 +1,22 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
-import { existsSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { WorktreeService } from '../application/git/worktree-service.js';
 import { TerminalService } from '../application/terminal/terminal-service.js';
 import { NotesService } from '../application/notes/notes-service.js';
 import { TextsService } from '../application/canvas/texts-service.js';
+import { FramesService } from '../application/canvas/frames-service.js';
 import { TasksService } from '../application/tasks/tasks-service.js';
 import { UsageService } from '../application/usage/usage-service.js';
 import { WorkspaceService } from '../application/workspace/workspace-service.js';
+import { parseWorktreeInfo } from '../domain/git/worktree.js';
 import type { NotePatch } from '../domain/notes/note.js';
 import type { CanvasTextPatch } from '../domain/canvas/text.js';
+import type { CanvasFramePatch } from '../domain/canvas/frame.js';
 import type { TaskListPatch } from '../domain/tasks/task-list.js';
-import { claudeProjectKey, isClaudeCommand, withContinue } from '../domain/terminal/command.js';
+import { isClaudeCommand, withContinue } from '../domain/terminal/command.js';
 import type { TerminalSpec } from '../domain/terminal/types.js';
 import type { SavedTerminal } from '../domain/workspace/config.js';
 import {
@@ -22,14 +27,21 @@ import {
   parseTrackSizes,
   type CanvasRect,
 } from '../domain/workspace/layout.js';
+import { parsePaneColor } from '../domain/workspace/colors.js';
 import { parseSettings, WINDOW_BACKGROUND } from '../domain/workspace/settings.js';
+import { parseTemplate } from '../domain/workspace/template.js';
+import { summarize } from '../domain/workspace/workspace.js';
 import { JsonConfigStore } from '../infrastructure/persistence/json-config-store.js';
 import { JsonNotesStore } from '../infrastructure/persistence/json-notes-store.js';
 import { JsonTextsStore } from '../infrastructure/persistence/json-texts-store.js';
+import { JsonFramesStore } from '../infrastructure/persistence/json-frames-store.js';
 import { JsonTasksStore } from '../infrastructure/persistence/json-tasks-store.js';
+import { GitCli } from '../infrastructure/git/git-cli.js';
 import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
+import { hasClaudeTranscript, hasProjectConversations } from '../infrastructure/usage/claude-paths.js';
 import { CHANNELS, type BootstrapState, type RestoredSession } from '../shared/contract.js';
 import { AttentionNotifier } from './attention.js';
+import { OutputBatcher } from './output-batcher.js';
 
 let mainWindow: BrowserWindow | null = null;
 let workspace: WorkspaceService;
@@ -38,7 +50,10 @@ let attention: AttentionNotifier;
 let usage: UsageService;
 let notes: NotesService;
 let texts: TextsService;
+let frames: FramesService;
 let tasks: TasksService;
+const worktrees = new WorktreeService(new GitCli());
+const output = new OutputBatcher((batch) => send(CHANNELS.data, batch));
 /** Posicao de cada terminal na area livre. Vive aqui porque a sessao nao sabe de layout. */
 const terminalRects = new Map<string, CanvasRect>();
 /**
@@ -107,6 +122,10 @@ function persistTerminals(): void {
     cwd: snapshot.cwd,
     shell: snapshot.shell,
     ...(snapshot.command ? { command: snapshot.command } : {}),
+    ...(snapshot.color ? { color: snapshot.color } : {}),
+    ...(snapshot.claudeSession ? { claudeSession: snapshot.claudeSession } : {}),
+    ...(snapshot.worktree ? { worktree: snapshot.worktree } : {}),
+    workspaceId: snapshot.workspaceId,
     rect: terminalRects.get(snapshot.id) ?? null,
   }));
   workspace.setTerminals([...live, ...pendingSession]);
@@ -123,7 +142,13 @@ function restoreSession(): RestoredSession {
         name: entry.name,
         cwd: entry.cwd,
         shell: entry.shell,
-        command: entry.command ? resumeCommand(entry.command, entry.cwd) : undefined,
+        // Com a conversa salva, o proprio terminal a retoma (`--resume <id>`).
+        command: entry.command && !entry.claudeSession ? resumeCommand(entry.command, entry.cwd) : entry.command,
+        color: entry.color ?? null,
+        claudeSession: entry.claudeSession ?? null,
+        // Pasta removida por fora: o terminal abre no home, sem worktree.
+        worktree: entry.worktree && existsSync(entry.worktree.path) ? entry.worktree : null,
+        workspaceId: entry.workspaceId,
       }, undefined, entry.id);
       restored.terminals.push(snapshot);
       if (entry.rect) {
@@ -139,29 +164,34 @@ function restoreSession(): RestoredSession {
 }
 
 /**
- * Ao restaurar, um `claude` volta para a conversa onde estava (`--continue`).
- * So quando ha conversa salva para o diretorio: sem ela o `--continue` falha.
+ * Terminal salvo antes de existir a conversa por terminal: um `claude` volta
+ * para a ultima conversa do diretorio (`--continue`). So quando ha conversa
+ * salva para o diretorio: sem ela o `--continue` falha.
  */
 function resumeCommand(command: string, cwd: string): string {
   if (!isClaudeCommand(command)) return command;
-  const base = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
-  return existsSync(join(base, 'projects', claudeProjectKey(cwd))) ? withContinue(command) : command;
+  return hasProjectConversations(cwd) ? withContinue(command) : command;
 }
 
 function registerIpc(): void {
   ipcMain.handle(CHANNELS.bootstrap, (): BootstrapState => {
     const config = workspace.current();
+    const active = workspace.active();
     return {
-      layout: config.layout,
-      layoutSizes: config.layoutSizes,
+      workspaces: config.workspaces.map(summarize),
+      activeWorkspace: active.id,
+      layout: active.layout,
+      layoutSizes: active.layoutSizes,
       notes: notes.list(),
       taskLists: tasks.list(),
       texts: texts.list(),
+      frames: frames.list(),
       recentDirs: config.recentDirs,
       recentCommands: config.recentCommands,
+      templates: config.templates,
       terminals: terminals.list(),
       terminalRects: Object.fromEntries(terminalRects),
-      canvasView: config.canvasView,
+      canvasView: active.canvasView,
       settings: config.settings,
       pendingSession,
       defaultDir: config.recentDirs[0] ?? homedir(),
@@ -186,9 +216,17 @@ function registerIpc(): void {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
-  ipcMain.handle(CHANNELS.create, (_event, spec: TerminalSpec) => {
-    const snapshot = terminals.create(spec);
-    workspace.rememberDir(snapshot.cwd);
+  ipcMain.handle(CHANNELS.create, async (_event, spec: TerminalSpec, worktreeBranch?: unknown) => {
+    // Worktree e workspace do spec so podem vir daqui: o renderer pede o
+    // worktree pela branch, e o terminal nasce no workspace em uso.
+    let resolved: TerminalSpec = { ...spec, worktree: null, workspaceId: workspace.active().id };
+    if (typeof worktreeBranch === 'string' && worktreeBranch.trim()) {
+      const worktree = await worktrees.create(spec.cwd, worktreeBranch.trim());
+      resolved = { ...resolved, cwd: worktree.path, worktree };
+    }
+    const snapshot = terminals.create(resolved);
+    // O recente e o diretorio que voce escolheu, nao a pasta do worktree.
+    workspace.rememberDir(snapshot.worktree ? snapshot.worktree.repo : snapshot.cwd);
     if (snapshot.command) workspace.rememberCommand(snapshot.command);
     persistTerminals();
     return snapshot;
@@ -200,6 +238,52 @@ function registerIpc(): void {
     if (cwd) workspace.rememberDir(cwd);
   });
   ipcMain.handle(CHANNELS.rename, (_event, id: string, name: string) => terminals.rename(id, name));
+  ipcMain.handle(CHANNELS.moveTerminal, (_event, id: string, workspaceId: unknown) => {
+    if (typeof workspaceId === 'string' && workspace.has(workspaceId)) terminals.moveToWorkspace(id, workspaceId);
+  });
+  ipcMain.handle(CHANNELS.workspaceSwitch, (_event, id: string) => workspace.activate(id));
+  ipcMain.handle(CHANNELS.workspaceCreate, (_event, name: unknown) =>
+    workspace.createWorkspace(typeof name === 'string' ? name : ''));
+  ipcMain.handle(CHANNELS.workspaceRename, (_event, id: string, name: unknown) => {
+    if (typeof name === 'string') workspace.renameWorkspace(id, name);
+    return workspace.current().workspaces.map(summarize);
+  });
+  ipcMain.handle(CHANNELS.workspaceDelete, (_event, id: string) => {
+    if (!workspace.removeWorkspace(id)) return null;
+    for (const snapshot of terminals.list()) {
+      if (snapshot.workspaceId === id) terminals.close(snapshot.id);
+    }
+    pendingSession = pendingSession.filter((entry) => entry.workspaceId !== id);
+    notes.removeWorkspace(id);
+    tasks.removeWorkspace(id);
+    texts.removeWorkspace(id);
+    frames.removeWorkspace(id);
+    persistTerminals();
+    return workspace.active();
+  });
+  ipcMain.handle(CHANNELS.setColor, (_event, id: string, color: unknown) => {
+    terminals.setColor(id, parsePaneColor(color));
+  });
+  ipcMain.handle(CHANNELS.gitInfo, (_event, cwd: unknown) =>
+    typeof cwd === 'string' && cwd ? worktrees.info(cwd) : { repo: null, branch: null });
+  ipcMain.handle(CHANNELS.worktreeDirty, (_event, raw: unknown) => {
+    const worktree = parseWorktreeInfo(raw);
+    return worktree ? worktrees.isDirty(worktree) : false;
+  });
+  ipcMain.handle(CHANNELS.worktreeRemove, async (_event, raw: unknown, force: unknown) => {
+    const worktree = parseWorktreeInfo(raw);
+    if (!worktree) throw new Error('Worktree invalido.');
+    await worktrees.remove(worktree, force === true);
+  });
+  ipcMain.handle(CHANNELS.templateSave, (_event, input: unknown) => {
+    const template = parseTemplate(input, randomUUID());
+    if (template) workspace.saveTemplate(template);
+    return workspace.current().templates;
+  });
+  ipcMain.handle(CHANNELS.templateDelete, (_event, id: string) => {
+    workspace.removeTemplate(id);
+    return workspace.current().templates;
+  });
   ipcMain.on(CHANNELS.setRect, (_event, id: string, rect: unknown) => {
     const parsed = parseCanvasRect(rect);
     if (parsed) terminalRects.set(id, parsed);
@@ -207,7 +291,12 @@ function registerIpc(): void {
     persistTerminals();
   });
   ipcMain.handle(CHANNELS.interrupt, (_event, id: string) => terminals.interrupt(id));
-  ipcMain.handle(CHANNELS.replay, (_event, id: string) => terminals.replay(id));
+  ipcMain.handle(CHANNELS.replay, (_event, id: string) => {
+    // O que esta no lote entra no replay; entregar antes garante que nenhum
+    // lote misture chunks de antes e de depois dele.
+    output.flush();
+    return terminals.replay(id);
+  });
 
   ipcMain.on(CHANNELS.acknowledge, (_event, id: string) => terminals.acknowledge(id));
   ipcMain.on(CHANNELS.write, (_event, id: string, data: string) => terminals.write(id, data));
@@ -234,25 +323,42 @@ function registerIpc(): void {
     mainWindow?.setBackgroundColor(WINDOW_BACKGROUND[parsed.theme]);
   });
 
-  ipcMain.handle(CHANNELS.noteCreate, () => notes.create());
+  ipcMain.handle(CHANNELS.noteCreate, () => notes.create(workspace.active().id));
   ipcMain.on(CHANNELS.noteUpdate, (_event, id: string, patch: NotePatch) => {
-    if (typeof patch === 'object' && patch !== null) notes.update(id, patch);
+    if (typeof patch === 'object' && patch !== null) notes.update(id, withKnownWorkspace(patch));
   });
   ipcMain.handle(CHANNELS.noteDelete, (_event, id: string) => notes.remove(id));
 
-  ipcMain.handle(CHANNELS.taskListCreate, () => tasks.create());
+  ipcMain.handle(CHANNELS.taskListCreate, () => tasks.create(workspace.active().id));
   ipcMain.on(CHANNELS.taskListUpdate, (_event, id: string, patch: TaskListPatch) => {
-    if (typeof patch === 'object' && patch !== null) tasks.update(id, patch);
+    if (typeof patch === 'object' && patch !== null) tasks.update(id, withKnownWorkspace(patch));
   });
   ipcMain.handle(CHANNELS.taskListDelete, (_event, id: string) => tasks.remove(id));
 
   ipcMain.handle(CHANNELS.textCreate, (_event, x: unknown, y: unknown) =>
-    texts.create(Number.isFinite(x) ? (x as number) : 0, Number.isFinite(y) ? (y as number) : 0),
+    texts.create(Number.isFinite(x) ? (x as number) : 0, Number.isFinite(y) ? (y as number) : 0, workspace.active().id),
   );
   ipcMain.on(CHANNELS.textUpdate, (_event, id: string, patch: CanvasTextPatch) => {
     if (typeof patch === 'object' && patch !== null) texts.update(id, patch);
   });
   ipcMain.handle(CHANNELS.textDelete, (_event, id: string) => texts.remove(id));
+
+  ipcMain.handle(CHANNELS.frameCreate, (_event, rect: unknown) => {
+    const parsed = parseCanvasRect(rect);
+    if (!parsed) throw new Error('Retangulo invalido.');
+    return frames.create(parsed, workspace.active().id);
+  });
+  ipcMain.on(CHANNELS.frameUpdate, (_event, id: string, patch: CanvasFramePatch) => {
+    if (typeof patch === 'object' && patch !== null) frames.update(id, patch);
+  });
+  ipcMain.handle(CHANNELS.frameDelete, (_event, id: string) => frames.remove(id));
+}
+
+/** Mover para um workspace que nao existe deixaria o item invisivel para sempre. */
+function withKnownWorkspace<T extends { workspaceId?: string }>(patch: T): T {
+  if (patch.workspaceId === undefined || workspace.has(patch.workspaceId)) return patch;
+  const { workspaceId: _ignored, ...rest } = patch;
+  return rest as T;
 }
 
 // Uma unica instancia: abrir de novo apenas foca a janela existente.
@@ -269,10 +375,11 @@ if (!app.requestSingleInstanceLock()) {
     workspace = new WorkspaceService(new JsonConfigStore(app.getPath('userData')));
     notes = new NotesService(new JsonNotesStore(app.getPath('userData')));
     texts = new TextsService(new JsonTextsStore(app.getPath('userData')));
+    frames = new FramesService(new JsonFramesStore(app.getPath('userData')));
     tasks = new TasksService(new JsonTasksStore(app.getPath('userData')));
     attention = new AttentionNotifier(() => mainWindow);
     terminals = new TerminalService(new NodePtyFactory(), {
-      onData: (id, chunk) => send(CHANNELS.data, id, chunk),
+      onData: (id, chunk, seq) => output.push(id, chunk, seq),
       onUpdate: (snapshot) => {
         attention.observe(snapshot);
         send(CHANNELS.update, snapshot);
@@ -283,9 +390,10 @@ if (!app.requestSingleInstanceLock()) {
         attention.forget(id);
         terminalRects.delete(id);
         persistTerminals();
+        output.flush();
         send(CHANNELS.closed, id);
       },
-    });
+    }, (sessionId) => hasClaudeTranscript(sessionId));
 
     usage = new UsageService(undefined, (summary) => send(CHANNELS.usageUpdate, summary));
 
@@ -304,10 +412,12 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', () => {
     persistBounds();
     usage?.stop();
+    output.dispose();
     terminals?.closeAll();
     workspace?.flush();
     notes?.flush();
     texts?.flush();
+    frames?.flush();
     tasks?.flush();
   });
 }

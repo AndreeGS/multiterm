@@ -2,13 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
+import { cleanCommand, wantsOwnSession } from '../../domain/terminal/command.js';
 import type { PtyFactory } from '../../domain/terminal/pty.js';
-import { TerminalSession } from '../../domain/terminal/session.js';
-import type { TerminalSize, TerminalSnapshot, TerminalSpec } from '../../domain/terminal/types.js';
+import type { PaneColor } from '../../domain/workspace/colors.js';
+import { TerminalSession, type TranscriptCheck } from '../../domain/terminal/session.js';
+import type { ReplaySnapshot, TerminalSize, TerminalSnapshot, TerminalSpec } from '../../domain/terminal/types.js';
 
 export interface TerminalServiceListeners {
-  /** Bytes crus do pty, destinados ao xterm. */
-  onData(id: string, chunk: string): void;
+  /** Bytes crus do pty, destinados ao xterm. `seq` numera os chunks da sessao. */
+  onData(id: string, chunk: string, seq: number): void;
   /** Metadados da sessao mudaram (status, nome, cwd). */
   onUpdate(snapshot: TerminalSnapshot): void;
   /** Sessao removida do workspace. */
@@ -25,6 +27,7 @@ export class TerminalService {
   constructor(
     private readonly ptys: PtyFactory,
     private readonly listeners: TerminalServiceListeners,
+    private readonly hasTranscript: TranscriptCheck = () => false,
   ) {}
 
   /**
@@ -34,10 +37,14 @@ export class TerminalService {
   create(spec: TerminalSpec, size?: TerminalSize, reuseId?: string): TerminalSnapshot {
     const cwd = resolveCwd(spec.cwd);
     const id = reuseId && !this.sessions.has(reuseId) ? reuseId : randomUUID();
-    const session = new TerminalSession(id, { ...spec, cwd }, this.ptys, {
-      onData: (sid, chunk) => this.listeners.onData(sid, chunk),
+    // Cada `claude` ganha uma conversa propria; restaurar traz a mesma de volta.
+    const claudeSession = wantsOwnSession(cleanCommand(spec.command))
+      ? (spec.claudeSession ?? randomUUID())
+      : null;
+    const session = new TerminalSession(id, { ...spec, cwd, claudeSession }, this.ptys, {
+      onData: (sid, chunk, seq) => this.listeners.onData(sid, chunk, seq),
       onUpdate: (snapshot) => this.listeners.onUpdate(snapshot),
-    });
+    }, this.hasTranscript);
     this.sessions.set(id, session);
     session.start(size);
     return session.snapshot();
@@ -52,8 +59,8 @@ export class TerminalService {
   }
 
   /** Output recente, para a UI reconstruir a tela ao (re)anexar. */
-  replay(id: string): string {
-    return this.sessions.get(id)?.replayBuffer() ?? '';
+  replay(id: string): ReplaySnapshot {
+    return this.sessions.get(id)?.replayBuffer() ?? { data: '', seq: 0 };
   }
 
   write(id: string, data: string): void {
@@ -74,6 +81,14 @@ export class TerminalService {
 
   rename(id: string, name: string): void {
     this.sessions.get(id)?.rename(name);
+  }
+
+  moveToWorkspace(id: string, workspaceId: string): void {
+    this.sessions.get(id)?.moveToWorkspace(workspaceId);
+  }
+
+  setColor(id: string, color: PaneColor | null): void {
+    this.sessions.get(id)?.setColor(color);
   }
 
   /** Reinicia o shell. `cwd` opcional troca o diretorio de trabalho. */
