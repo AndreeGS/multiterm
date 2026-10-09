@@ -12,7 +12,9 @@ import {
   type LayoutId,
   type TrackSizes,
 } from './layout.js';
+import { parsePaneColor, type PaneColor } from './colors.js';
 import { defaultSettings, parseSettings, type Settings } from './settings.js';
+import { parseTemplates, type TerminalTemplate } from './template.js';
 
 export interface WindowBounds {
   x?: number;
@@ -33,6 +35,8 @@ export interface SavedTerminal {
   shell?: string;
   /** Comando inicial (ex.: `claude`); ausente = so o shell. */
   command?: string;
+  /** Cor de destaque; ausente = sem cor. */
+  color?: PaneColor;
   rect: CanvasRect | null;
 }
 
@@ -53,6 +57,8 @@ export interface AppConfig {
   canvasView: CanvasView | null;
   /** Tema e tamanhos de fonte. */
   settings: Settings;
+  /** Terminais prontos para abrir com um clique. */
+  templates: TerminalTemplate[];
 }
 
 export const MAX_RECENT_DIRS = 12;
@@ -68,6 +74,7 @@ export function defaultConfig(): AppConfig {
     terminals: [],
     canvasView: null,
     settings: defaultSettings(),
+    templates: [],
   };
 }
 
@@ -116,6 +123,7 @@ export function parseConfig(raw: unknown): AppConfig {
 
   base.canvasView = parseCanvasView(input.canvasView);
   base.settings = parseSettings(input.settings);
+  base.templates = parseTemplates(input.templates);
 
   return base;
 }
@@ -133,6 +141,8 @@ function parseSavedTerminal(raw: unknown): SavedTerminal | null {
   if (typeof input.shell === 'string' && input.shell) saved.shell = input.shell;
   const command = cleanCommand(input.command);
   if (command) saved.command = command;
+  const color = parsePaneColor(input.color);
+  if (color) saved.color = color;
   return saved;
 }
 

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -22,7 +23,9 @@ import {
   parseTrackSizes,
   type CanvasRect,
 } from '../domain/workspace/layout.js';
+import { parsePaneColor } from '../domain/workspace/colors.js';
 import { parseSettings, WINDOW_BACKGROUND } from '../domain/workspace/settings.js';
+import { parseTemplate } from '../domain/workspace/template.js';
 import { JsonConfigStore } from '../infrastructure/persistence/json-config-store.js';
 import { JsonNotesStore } from '../infrastructure/persistence/json-notes-store.js';
 import { JsonTextsStore } from '../infrastructure/persistence/json-texts-store.js';
@@ -109,6 +112,7 @@ function persistTerminals(): void {
     cwd: snapshot.cwd,
     shell: snapshot.shell,
     ...(snapshot.command ? { command: snapshot.command } : {}),
+    ...(snapshot.color ? { color: snapshot.color } : {}),
     rect: terminalRects.get(snapshot.id) ?? null,
   }));
   workspace.setTerminals([...live, ...pendingSession]);
@@ -126,6 +130,7 @@ function restoreSession(): RestoredSession {
         cwd: entry.cwd,
         shell: entry.shell,
         command: entry.command ? resumeCommand(entry.command, entry.cwd) : undefined,
+        color: entry.color ?? null,
       }, undefined, entry.id);
       restored.terminals.push(snapshot);
       if (entry.rect) {
@@ -161,6 +166,7 @@ function registerIpc(): void {
       texts: texts.list(),
       recentDirs: config.recentDirs,
       recentCommands: config.recentCommands,
+      templates: config.templates,
       terminals: terminals.list(),
       terminalRects: Object.fromEntries(terminalRects),
       canvasView: config.canvasView,
@@ -202,6 +208,18 @@ function registerIpc(): void {
     if (cwd) workspace.rememberDir(cwd);
   });
   ipcMain.handle(CHANNELS.rename, (_event, id: string, name: string) => terminals.rename(id, name));
+  ipcMain.handle(CHANNELS.setColor, (_event, id: string, color: unknown) => {
+    terminals.setColor(id, parsePaneColor(color));
+  });
+  ipcMain.handle(CHANNELS.templateSave, (_event, input: unknown) => {
+    const template = parseTemplate(input, randomUUID());
+    if (template) workspace.saveTemplate(template);
+    return workspace.current().templates;
+  });
+  ipcMain.handle(CHANNELS.templateDelete, (_event, id: string) => {
+    workspace.removeTemplate(id);
+    return workspace.current().templates;
+  });
   ipcMain.on(CHANNELS.setRect, (_event, id: string, rect: unknown) => {
     const parsed = parseCanvasRect(rect);
     if (parsed) terminalRects.set(id, parsed);

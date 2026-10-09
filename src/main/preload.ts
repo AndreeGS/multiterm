@@ -26,6 +26,7 @@ const api: MultiTermApi = {
   closeTerminal: (id) => ipcRenderer.invoke(CHANNELS.close, id),
   restartTerminal: (id, cwd) => ipcRenderer.invoke(CHANNELS.restart, id, cwd),
   renameTerminal: (id, name) => ipcRenderer.invoke(CHANNELS.rename, id, name),
+  setTerminalColor: (id, color) => ipcRenderer.invoke(CHANNELS.setColor, id, color),
   interruptTerminal: (id) => ipcRenderer.invoke(CHANNELS.interrupt, id),
   replayTerminal: (id) => ipcRenderer.invoke(CHANNELS.replay, id),
 
@@ -33,6 +34,8 @@ const api: MultiTermApi = {
   writeTerminal: (id, data) => ipcRenderer.send(CHANNELS.write, id, data),
   resizeTerminal: (id, cols, rows) => ipcRenderer.send(CHANNELS.resize, id, cols, rows),
   setTerminalRect: (id, rect: CanvasRect | null) => ipcRenderer.send(CHANNELS.setRect, id, rect),
+  saveTemplate: (input) => ipcRenderer.invoke(CHANNELS.templateSave, input),
+  deleteTemplate: (id) => ipcRenderer.invoke(CHANNELS.templateDelete, id),
   restoreSession: () => ipcRenderer.invoke(CHANNELS.sessionRestore),
   discardSession: () => ipcRenderer.invoke(CHANNELS.sessionDiscard),
   setLayout: (layout: LayoutId) => ipcRenderer.send(CHANNELS.setLayout, layout),

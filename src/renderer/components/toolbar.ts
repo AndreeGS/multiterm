@@ -4,6 +4,8 @@ import { UsageBar } from './usage-bar.js';
 
 export interface ToolbarCallbacks {
   onNewTerminal(): void;
+  /** Abrir um terminal a partir de um template. */
+  onTemplates(): void;
   onNewNote(): void;
   onNewTaskList(): void;
   onLayout(layout: LayoutId): void;
@@ -38,6 +40,16 @@ export class Toolbar {
     newBtn.textContent = '+ Terminal';
     newBtn.title = 'Novo terminal (Ctrl+T)';
     newBtn.addEventListener('click', () => this.callbacks.onNewTerminal());
+
+    const templatesBtn = document.createElement('button');
+    templatesBtn.className = 'primary templates-btn';
+    templatesBtn.textContent = '▾';
+    templatesBtn.title = 'Abrir um template de terminal';
+    templatesBtn.addEventListener('click', () => this.callbacks.onTemplates());
+
+    const newGroup = document.createElement('div');
+    newGroup.className = 'split-btn';
+    newGroup.append(newBtn, templatesBtn);
 
     const noteBtn = document.createElement('button');
     noteBtn.textContent = '+ Nota';
@@ -98,7 +110,7 @@ export class Toolbar {
 
     this.element.append(
       brand,
-      newBtn,
+      newGroup,
       noteBtn,
       tasksBtn,
       this.attentionBtn,

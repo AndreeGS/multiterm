@@ -7,6 +7,7 @@ import type { MultiTermApi } from '../../shared/contract.js';
 import { shortenPath } from '../paths.js';
 import { matchShortcut } from '../shortcuts.js';
 import { MIN_CONTRAST, TERMINAL_THEMES, type Appearance } from '../theme.js';
+import { openColorMenu, paneColorVar } from './color-menu.js';
 import { beginRename, button, el, type Panel } from './panel.js';
 
 const STATUS_LABEL: Record<TerminalSnapshot['status'], string> = {
@@ -38,6 +39,7 @@ export class TerminalPane implements Panel {
   private readonly nameEl: HTMLElement;
   private readonly cwdEl: HTMLElement;
   private readonly maximizeBtn: HTMLButtonElement;
+  private readonly colorBtn: HTMLButtonElement;
   private readonly observer: ResizeObserver;
   private snapshot: TerminalSnapshot;
   /**
@@ -83,7 +85,10 @@ export class TerminalPane implements Panel {
     this.maximizeBtn = button('⤢', 'Maximizar / restaurar', () =>
       this.callbacks.onMaximize(this.id),
     );
+    this.colorBtn = button('●', 'Cor do terminal', () => void this.pickColor());
+    this.colorBtn.classList.add('color-btn');
     actions.append(
+      this.colorBtn,
       button('■', 'Interromper (Ctrl+C)', () => void this.api.interruptTerminal(this.id)),
       button('⟳', 'Reiniciar shell', () => void this.api.restartTerminal(this.id)),
       this.maximizeBtn,
@@ -146,6 +151,9 @@ export class TerminalPane implements Panel {
     this.dot.dataset.status = snapshot.status;
     this.element.classList.toggle('attention', snapshot.needsAttention);
     this.element.classList.toggle('notice', snapshot.notice !== null);
+    this.element.classList.toggle('colored', snapshot.color !== null);
+    if (snapshot.color) this.element.style.setProperty('--pane-accent', paneColorVar(snapshot.color));
+    else this.element.style.removeProperty('--pane-accent');
     this.dot.title = STATUS_LABEL[snapshot.status] +
       (snapshot.exitCode !== null ? ` (codigo ${snapshot.exitCode})` : '');
   }
@@ -229,6 +237,13 @@ export class TerminalPane implements Panel {
       this.lastSize = { cols, rows };
       this.api.resizeTerminal(this.id, cols, rows);
     }
+  }
+
+  /** Abre o menu de cores sob o botao ● do cabecalho. */
+  async pickColor(): Promise<void> {
+    const color = await openColorMenu(this.colorBtn, this.snapshot.color);
+    if (color !== undefined) await this.api.setTerminalColor(this.id, color);
+    this.focus();
   }
 
   /** Output ao vivo do pty, roteado pelo App. */

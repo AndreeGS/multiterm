@@ -1,20 +1,34 @@
 import type { TerminalSpec } from '../../domain/terminal/types.js';
+import type { PaneColor } from '../../domain/workspace/colors.js';
+import type { TerminalTemplate } from '../../domain/workspace/template.js';
 import type { MultiTermApi } from '../../shared/contract.js';
 import { shortenPath } from '../paths.js';
+import { colorSwatches, paneColorVar } from './color-menu.js';
 
 /** Sugestoes fixas; os comandos que voce usou aparecem antes delas. */
 const COMMAND_PRESETS = ['claude', 'claude --continue', 'codex', 'npm run dev'];
 
+export interface NewTerminalOptions {
+  readonly recentDirs: string[];
+  readonly defaultDir: string;
+  readonly recentCommands: string[];
+  readonly templates: TerminalTemplate[];
+}
+
+export interface NewTerminalResult {
+  readonly spec: TerminalSpec;
+  /** Marcou "Salvar como template". */
+  readonly saveAsTemplate: boolean;
+}
+
 /**
  * Dialogo de criacao. Nada e executado aqui: apenas coleta diretorio, comando
- * inicial e nome. Resolve com `null` se o usuario cancelar.
+ * inicial, nome e cor. Resolve com `null` se o usuario cancelar.
  */
 export function openNewTerminalDialog(
   api: MultiTermApi,
-  recentDirs: string[],
-  defaultDir: string,
-  recentCommands: string[],
-): Promise<TerminalSpec | null> {
+  { recentDirs, defaultDir, recentCommands, templates }: NewTerminalOptions,
+): Promise<NewTerminalResult | null> {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.className = 'overlay';
@@ -23,6 +37,7 @@ export function openNewTerminalDialog(
     modal.className = 'modal';
     modal.innerHTML = `
       <h2>Novo terminal</h2>
+      <div class="recent templates" id="templates"></div>
       <label>Diretorio do projeto
         <span class="dir-row">
           <input type="text" id="dir" spellcheck="false" />
@@ -37,6 +52,11 @@ export function openNewTerminalDialog(
       <label>Nome (opcional)
         <input type="text" id="name" spellcheck="false" placeholder="derivado do diretorio" />
       </label>
+      <div class="field">
+        <span class="field-label">Cor</span>
+        <span id="colors"></span>
+      </div>
+      <label class="check-row"><input type="checkbox" id="save-template" /> Salvar como template</label>
       <div class="modal-actions">
         <button type="button" id="cancel">Cancelar</button>
         <button type="button" id="create" class="primary">Criar terminal</button>
@@ -50,8 +70,39 @@ export function openNewTerminalDialog(
     const recentBox = modal.querySelector<HTMLElement>('#recent')!;
     const commandInput = modal.querySelector<HTMLInputElement>('#command')!;
     const commandsBox = modal.querySelector<HTMLElement>('#commands')!;
+    const templatesBox = modal.querySelector<HTMLElement>('#templates')!;
+    const colorsBox = modal.querySelector<HTMLElement>('#colors')!;
+    const saveTemplate = modal.querySelector<HTMLInputElement>('#save-template')!;
 
     dirInput.value = defaultDir;
+
+    let color: PaneColor | null = null;
+    const setColor = (next: PaneColor | null) => {
+      color = next;
+      colorsBox.replaceChildren(colorSwatches(color, (picked) => {
+        color = picked;
+      }));
+    };
+    setColor(null);
+
+    // Um template preenche o formulario inteiro; da para ajustar antes de criar.
+    templatesBox.hidden = templates.length === 0;
+    for (const template of templates) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'template-chip';
+      chip.textContent = template.name;
+      chip.title = `${template.cwd}${template.command ? `\n${template.command}` : ''}`;
+      if (template.color) chip.style.setProperty('--chip-color', paneColorVar(template.color));
+      chip.addEventListener('click', () => {
+        dirInput.value = template.cwd;
+        commandInput.value = template.command;
+        nameInput.value = template.name;
+        setColor(template.color);
+        modal.querySelector<HTMLButtonElement>('#create')!.focus();
+      });
+      templatesBox.appendChild(chip);
+    }
 
     for (const dir of recentDirs) {
       const chip = document.createElement('button');
@@ -79,12 +130,12 @@ export function openNewTerminalDialog(
     }
 
     let settled = false;
-    const close = (spec: TerminalSpec | null) => {
+    const close = (result: NewTerminalResult | null) => {
       if (settled) return;
       settled = true;
       overlay.remove();
       document.removeEventListener('keydown', onKey, true);
-      resolve(spec);
+      resolve(result);
     };
 
     const submit = () => {
@@ -93,7 +144,10 @@ export function openNewTerminalDialog(
         dirInput.focus();
         return;
       }
-      close({ cwd, name: nameInput.value.trim(), command: commandInput.value.trim() });
+      close({
+        spec: { cwd, name: nameInput.value.trim(), command: commandInput.value.trim(), color },
+        saveAsTemplate: saveTemplate.checked,
+      });
     };
 
     const onKey = (event: KeyboardEvent) => {

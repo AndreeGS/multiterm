@@ -292,6 +292,23 @@ describe('TerminalSession', () => {
     assert.deepEqual(data, []);
   });
 
+  it('cor: vem do spec (invalida vira null) e setColor avisa so quando muda', () => {
+    const s = new TerminalSession('t2', { name: 'x', cwd: '/tmp', color: 'blue' }, factory, {
+      onData: () => {},
+      onUpdate: (snapshot) => updates.push(snapshot),
+    });
+    assert.equal(s.snapshot().color, 'blue');
+    s.setColor('blue');
+    assert.equal(updates.length, 0);
+    s.setColor(null);
+    assert.equal(last().color, null);
+    const odd = new TerminalSession('t3', { name: 'x', cwd: '/tmp', color: 'rosa' as never }, factory, {
+      onData: () => {},
+      onUpdate: () => {},
+    });
+    assert.equal(odd.snapshot().color, null);
+  });
+
   it('rename ignora nome vazio ou igual', () => {
     const s = session();
     const before = updates.length;

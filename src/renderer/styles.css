@@ -881,3 +881,79 @@ body.show-indexes .pane-header[data-index]::before {
 body.linking, body.linking * { cursor: crosshair !important; }
 body.linking .pane-body { pointer-events: none; user-select: none; }
 .pane.link-target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+
+/* ---------- cor por terminal ---------- */
+:root {
+  --pane-blue: #5b9cf5;
+  --pane-green: #3fb970;
+  --pane-amber: #e0a43a;
+  --pane-red: #ef6461;
+  --pane-purple: #b48cf2;
+  --pane-teal: #3cc6c0;
+  --pane-gray: #8b93a7;
+}
+:root[data-theme="paper"] {
+  --pane-blue: #2f63a8;
+  --pane-green: #3d7a2c;
+  --pane-amber: #a8670c;
+  --pane-red: #b03a2e;
+  --pane-purple: #7b3fa8;
+  --pane-teal: #1f7f7a;
+  --pane-gray: #7a6c58;
+}
+/* Faixa a esquerda do cabecalho: nao disputa com a borda de aguardando/pedido. */
+.pane.colored .pane-header { box-shadow: inset 4px 0 0 var(--pane-accent); }
+.pane-actions .color-btn { color: var(--border); }
+.pane.colored .pane-actions .color-btn { color: var(--pane-accent); }
+
+.swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+/* `button.swatch` + :hover:not(:disabled): vence o hover generico dos botoes. */
+button.swatch,
+button.swatch:hover:not(:disabled) {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--swatch);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+button.swatch.none,
+button.swatch.none:hover:not(:disabled) {
+  background: linear-gradient(135deg, transparent 45%, var(--fg-dim) 45% 55%, transparent 55%), var(--input-bg);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+button.swatch:hover:not(:disabled) { border-color: var(--hover-border); }
+button.swatch.selected,
+button.swatch.selected:hover:not(:disabled) { border-color: var(--fg); }
+.color-menu {
+  position: fixed;
+  z-index: 100002;
+  padding: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px var(--shadow);
+}
+
+/* ---------- templates ---------- */
+.modal .field { display: flex; align-items: center; gap: 10px; }
+.field-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+}
+.recent .template-chip {
+  font: 12px ui-sans-serif, system-ui, sans-serif;
+  color: var(--fg);
+  border-left: 3px solid var(--chip-color, var(--border));
+}
+.split-btn { display: flex; }
+.split-btn > button:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.split-btn > .templates-btn {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left-color: var(--bg);
+  padding: 4px 6px;
+}

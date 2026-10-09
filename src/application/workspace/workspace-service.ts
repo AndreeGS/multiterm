@@ -2,6 +2,7 @@ import { type AppConfig, withRecentCommand, withRecentDir } from '../../domain/w
 import type { CanvasView, GridLayoutId, LayoutId, TrackSizes } from '../../domain/workspace/layout.js';
 import type { SavedTerminal, WindowBounds } from '../../domain/workspace/config.js';
 import type { Settings } from '../../domain/workspace/settings.js';
+import { withTemplate, type TerminalTemplate } from '../../domain/workspace/template.js';
 import type { JsonConfigStore } from '../../infrastructure/persistence/json-config-store.js';
 
 const SAVE_DEBOUNCE_MS = 400;
@@ -46,6 +47,16 @@ export class WorkspaceService {
 
   setSettings(settings: Settings): void {
     this.config = { ...this.config, settings };
+    this.scheduleSave();
+  }
+
+  saveTemplate(template: TerminalTemplate): void {
+    this.config = { ...this.config, templates: withTemplate(this.config.templates, template) };
+    this.scheduleSave();
+  }
+
+  removeTemplate(id: string): void {
+    this.config = { ...this.config, templates: this.config.templates.filter((t) => t.id !== id) };
     this.scheduleSave();
   }
 
