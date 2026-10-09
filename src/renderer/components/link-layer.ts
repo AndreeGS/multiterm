@@ -4,6 +4,8 @@ export interface LinkPair {
   readonly to: HTMLElement;
   /** Cor da linha: segue o estado do terminal. */
   readonly tone: 'normal' | 'attention' | 'notice';
+  /** Cor do terminal (valor CSS), usada quando o tom e `normal`. */
+  readonly color?: string;
 }
 
 interface Point {
@@ -61,7 +63,7 @@ export class LinkLayer {
         const [start, end] = facingSides(a, b);
         // Ponta coberta por outro card: a linha apontaria para algo que nao se ve.
         if (!visibleAt(pair.from, start) || !visibleAt(pair.to, end)) continue;
-        shapes.push(connector(start, end, box, pair.tone));
+        shapes.push(connector(start, end, box, pair.tone, pair.color));
       }
     }
     if (this.draft) {
@@ -128,14 +130,16 @@ function visibleAt(element: HTMLElement, at: Anchor): boolean {
 }
 
 /** Curva que sai perpendicular de um card e chega perpendicular no outro. */
-function connector(start: Anchor, end: Anchor, box: DOMRect, tone: LinkPair['tone']): string {
+function connector(start: Anchor, end: Anchor, box: DOMRect, tone: LinkPair['tone'], color?: string): string {
   const reach = Math.max(30, Math.min(140, Math.hypot(end.x - start.x, end.y - start.y) / 2));
   const c1 = { x: start.x + start.nx * reach, y: start.y + start.ny * reach };
   const c2 = { x: end.x + end.nx * reach, y: end.y + end.ny * reach };
   const p = (pt: Point) => `${round(pt.x - box.left)},${round(pt.y - box.top)}`;
+  // O estado (aguardando/pedido) vence a cor: e ele que pede acao.
+  const stroke = tone === 'normal' && color ? ` style="stroke:${color}"` : '';
   const dot = (pt: Point) =>
-    `<circle class="link-end ${tone}" cx="${round(pt.x - box.left)}" cy="${round(pt.y - box.top)}" r="4"/>`;
-  return `<path class="link ${tone}" d="M${p(start)} C${p(c1)} ${p(c2)} ${p(end)}"/>` + dot(start) + dot(end);
+    `<circle class="link-end ${tone}"${stroke} cx="${round(pt.x - box.left)}" cy="${round(pt.y - box.top)}" r="4"/>`;
+  return `<path class="link ${tone}"${stroke} d="M${p(start)} C${p(c1)} ${p(c2)} ${p(end)}"/>` + dot(start) + dot(end);
 }
 
 function center(rect: DOMRect): Point {

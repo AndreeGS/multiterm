@@ -10,11 +10,13 @@ export interface PaletteItem {
 }
 
 /**
- * Lista com busca: digita para filtrar, setas escolhem, Enter executa, Esc
+ * Lista com busca: digita para filtrar, setas escolhem, Enter escolhe, Esc
  * fecha. Serve para a paleta de comandos e para escolher um terminal.
- * Resolve quando fecha (executando algo ou nao).
+ * Resolve com o item escolhido (`null` se fechou sem escolher) e nao o
+ * executa: quem abriu chama `run()` depois de se dar por fechado, senao um
+ * item que abre outro dialogo acharia a paleta ainda aberta.
  */
-export function openPalette(items: PaletteItem[], placeholder: string): Promise<void> {
+export function openPalette(items: PaletteItem[], placeholder: string): Promise<PaletteItem | null> {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.className = 'overlay palette-overlay';
@@ -70,18 +72,14 @@ export function openPalette(items: PaletteItem[], placeholder: string): Promise<
     };
 
     let settled = false;
-    const close = () => {
+    const close = (chosen: PaletteItem | null = null) => {
       if (settled) return;
       settled = true;
       overlay.remove();
       document.removeEventListener('keydown', onKey, true);
-      resolve();
+      resolve(chosen);
     };
-    const choose = (index: number) => {
-      const item = visible[index];
-      close();
-      item?.run();
-    };
+    const choose = (index: number) => close(visible[index] ?? null);
 
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {

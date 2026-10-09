@@ -96,6 +96,33 @@ digitado — com o PATH, aliases e rc de sempre. Ele aparece no cabecalho
 O comando inicial nao arma o aviso de ocioso: um agente recem-aberto esperando
 instrucao nao e motivo de alerta.
 
+## Templates
+
+Um template guarda diretorio, comando inicial, nome e cor de um terminal que
+voce abre sempre (ex.: "API dev", "Claude no front"):
+
+- no dialogo de novo terminal, marque **Salvar como template**. Sem nome
+  digitado, o template leva o nome que o terminal ganhou. Salvar de novo com o
+  mesmo nome substitui o anterior;
+- o `▾` ao lado de `+ Terminal` lista os templates e abre direto, sem dialogo;
+- a paleta (`Ctrl+Shift+P`) tem `Novo: <template>` e `Apagar template: <nome>`;
+- no dialogo, os templates aparecem como chips no topo e preenchem o
+  formulario, para ajustar antes de criar.
+
+Ficam no `config.json`, no maximo 20 (salvar o 21o descarta o mais antigo).
+
+## Cor do terminal
+
+O `●` no cabecalho escolhe uma cor de destaque (ou nenhuma). Ela aparece como
+uma faixa a esquerda do cabecalho, em qualquer layout, e pinta a linha de
+vinculo na area livre — menos quando o terminal esta aguardando ou com pedido
+explicito: ai a linha usa a cor do estado, que e o que pede acao. A cor tambem
+pode ser escolhida no dialogo de novo terminal, vem do template e e salva com
+a sessao. Na paleta: `Cor de "<terminal>"`.
+
+As cores sao chaves (`blue`, `green`...), e cada tema define o tom em
+`--pane-<cor>` no `styles.css`.
+
 ## Configuracoes
 
 O botao `⚙` na barra superior (ou `Ctrl+,`) abre as configuracoes. Tudo e
@@ -328,8 +355,8 @@ todos com escrita atomica, sem banco de dados:
 
 - `config.json`: tamanho/posicao da janela, layout escolhido, proporcoes das
   divisorias de cada grade, diretorios e comandos recentes, terminais abertos
-  (nome, diretorio, shell, comando inicial, posicao), a vista da area livre e as configuracoes de
-  aparencia;
+  (nome, diretorio, shell, comando inicial, cor, posicao), templates, a vista
+  da area livre e as configuracoes de aparencia;
 - `notes.json`: as notas (titulo, texto, posicao na area livre e terminal
   vinculado);
 - `texts.json`: os textos soltos da area livre (conteudo, posicao, tamanho);

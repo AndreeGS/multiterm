@@ -1,12 +1,14 @@
 import type { Note } from '../domain/notes/note.js';
 import type { TaskList } from '../domain/tasks/task-list.js';
-import type { TerminalSnapshot } from '../domain/terminal/types.js';
+import type { TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js';
+import type { TerminalTemplate } from '../domain/workspace/template.js';
 import { capacity, isGridLayout, layoutFor, type CanvasRect, type LayoutId } from '../domain/workspace/layout.js';
 import type { SavedTerminal } from '../domain/workspace/config.js';
 import { defaultSettings, type Settings } from '../domain/workspace/settings.js';
 import type { MultiTermApi } from '../shared/contract.js';
 import { CanvasBoard } from './components/canvas.js';
 import { LinkLayer, type LinkPair } from './components/link-layer.js';
+import { paneColorVar } from './components/color-menu.js';
 import { openPalette, type PaletteItem } from './components/command-palette.js';
 import { TerminalGrid } from './components/grid.js';
 import { openNewTerminalDialog } from './components/new-terminal-dialog.js';
@@ -34,6 +36,7 @@ export class App {
   private layout: LayoutId;
   private recentDirs: string[] = [];
   private recentCommands: string[] = [];
+  private templates: TerminalTemplate[] = [];
   /** Terminais da sessao anterior ainda nao restaurados (vinculos podem apontar para eles). */
   private pendingTerminals: SavedTerminal[] = [];
   private readonly links: LinkLayer;
@@ -56,6 +59,7 @@ export class App {
     });
     this.toolbar = new Toolbar({
       onNewTerminal: () => void this.promptNewTerminal(),
+      onTemplates: () => void this.openTemplates(),
       onNewNote: () => void this.createNote(),
       onNewTaskList: () => void this.createTaskList(),
       onLayout: (next) => this.setLayout(next),
@@ -100,6 +104,7 @@ export class App {
     this.links.setEnabled(this.settings.showLinks);
     this.recentDirs = state.recentDirs;
     this.recentCommands = state.recentCommands;
+    this.templates = state.templates;
     this.defaultDir = state.defaultDir;
     setHomeDir(state.homeDir);
     this.grid.setSizes(state.layoutSizes);
@@ -254,7 +259,14 @@ export class App {
         { label: 'Fechar painel em foco', hint: 'Ctrl+Shift+W', run: () => void this.closePane(focused) },
       );
     }
+    items.push(...this.templateItems());
+    for (const template of this.templates) {
+      items.push({ label: `Apagar template: ${template.name}`, run: () => void this.deleteTemplate(template) });
+    }
     const focusedPane = focused ? this.panes.get(focused) : undefined;
+    if (focusedPane instanceof TerminalPane) {
+      items.push({ label: `Cor de "${focusedPane.name}"`, run: () => void focusedPane.pickColor() });
+    }
     if (focusedPane instanceof NotePane || focusedPane instanceof TaskPane) {
       items.push({ label: `Vincular "${paneLabel(focusedPane)}" a um terminal`, run: () => void this.pickLink(focusedPane.id) });
     }
@@ -266,11 +278,13 @@ export class App {
     }
     items.push({ label: 'Configuracoes', hint: 'Ctrl+,', run: () => void this.openSettings() });
 
+    let chosen: PaletteItem | null = null;
     try {
-      await openPalette(items, 'Ir para um painel ou executar um comando…');
+      chosen = await openPalette(items, 'Ir para um painel ou executar um comando…');
     } finally {
       this.dialogOpen = false;
     }
+    chosen?.run();
     // Fechou sem escolher (Esc): o foco volta para onde estava.
     if (this.focusedId === focused && focused) this.panes.get(focused)?.focus();
   }
@@ -316,11 +330,13 @@ export class App {
       return;
     }
     this.dialogOpen = true;
+    let chosen: PaletteItem | null = null;
     try {
-      await openPalette(items, `Vincular "${paneLabel(source)}" a qual terminal?`);
+      chosen = await openPalette(items, `Vincular "${paneLabel(source)}" a qual terminal?`);
     } finally {
       this.dialogOpen = false;
     }
+    chosen?.run();
     source.focus();
   }
 
@@ -399,11 +415,12 @@ export class App {
     for (const source of this.linkSources()) {
       const target = source.terminalId ? this.panes.get(source.terminalId) : undefined;
       if (!(target instanceof TerminalPane)) continue;
-      const { notice, needsAttention } = target.info;
+      const { notice, needsAttention, color } = target.info;
       pairs.push({
         from: source.element,
         to: target.element,
         tone: notice ? 'notice' : needsAttention ? 'attention' : 'normal',
+        ...(color ? { color: paneColorVar(color) } : {}),
       });
     }
     return pairs;
@@ -427,7 +444,7 @@ export class App {
     const chosen: { pane: TerminalPane | null } = { pane: null };
     this.dialogOpen = true;
     try {
-      await openPalette(terminals.map((pane) => ({
+      const item = await openPalette(terminals.map((pane) => ({
         label: pane.name,
         detail: paneDetail(pane),
         attention: this.attention.has(pane.id),
@@ -435,6 +452,7 @@ export class App {
           chosen.pane = pane;
         },
       })), placeholder);
+      item?.run();
     } finally {
       this.dialogOpen = false;
     }
@@ -456,18 +474,76 @@ export class App {
     if (this.dialogOpen) return;
     this.dialogOpen = true;
     try {
-      const spec = await openNewTerminalDialog(this.api, this.recentDirs, this.defaultDir, this.recentCommands);
-      if (!spec) return;
-      const snapshot = await this.api.createTerminal(spec);
-      this.rememberDir(snapshot.cwd);
-      if (snapshot.command) {
-        this.recentCommands = [snapshot.command, ...this.recentCommands.filter((c) => c !== snapshot.command)].slice(0, 8);
+      const result = await openNewTerminalDialog(this.api, {
+        recentDirs: this.recentDirs,
+        defaultDir: this.defaultDir,
+        recentCommands: this.recentCommands,
+        templates: this.templates,
+      });
+      if (!result) return;
+      const snapshot = await this.openTerminal(result.spec);
+      if (result.saveAsTemplate) {
+        // Sem nome digitado, o template leva o nome que o terminal ganhou.
+        this.templates = await this.api.saveTemplate({
+          name: snapshot.name,
+          cwd: snapshot.cwd,
+          command: snapshot.command ?? '',
+          color: snapshot.color,
+        });
       }
-      this.addTerminal(snapshot);
-      this.showNew(snapshot.id);
     } finally {
       this.dialogOpen = false;
     }
+  }
+
+  private async openTerminal(spec: TerminalSpec): Promise<TerminalSnapshot> {
+    const snapshot = await this.api.createTerminal(spec);
+    this.rememberDir(snapshot.cwd);
+    if (snapshot.command) {
+      this.recentCommands = [snapshot.command, ...this.recentCommands.filter((c) => c !== snapshot.command)].slice(0, 8);
+    }
+    this.addTerminal(snapshot);
+    this.showNew(snapshot.id);
+    return snapshot;
+  }
+
+  /** Um item de paleta por template: abre o terminal direto, sem dialogo. */
+  private templateItems(): PaletteItem[] {
+    return this.templates.map((template) => ({
+      label: `Novo: ${template.name}`,
+      detail: shortenPath(template.cwd) + (template.command ? ` · ${template.command}` : ''),
+      run: () => void this.openTerminal({
+        name: template.name,
+        cwd: template.cwd,
+        command: template.command,
+        color: template.color,
+      }),
+    }));
+  }
+
+  /** O ▾ ao lado de "+ Terminal": so os templates. Sem nenhum, vai ao dialogo. */
+  private async openTemplates(): Promise<void> {
+    if (this.dialogOpen) return;
+    if (this.templates.length === 0) {
+      await this.promptNewTerminal();
+      return;
+    }
+    this.dialogOpen = true;
+    let chosen: PaletteItem | null = null;
+    try {
+      chosen = await openPalette(
+        [...this.templateItems(), { label: 'Outro terminal…', hint: 'Ctrl+Shift+T', run: () => void this.promptNewTerminal() }],
+        'Abrir um template…',
+      );
+    } finally {
+      this.dialogOpen = false;
+    }
+    chosen?.run();
+  }
+
+  private async deleteTemplate(template: TerminalTemplate): Promise<void> {
+    if (!window.confirm(`Apagar o template "${template.name}"?`)) return;
+    this.templates = await this.api.deleteTemplate(template.id);
   }
 
   private async openSettings(): Promise<void> {

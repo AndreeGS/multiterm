@@ -10,6 +10,8 @@ import type { TaskList, TaskListPatch } from '../domain/tasks/task-list.js';
 import type { LayoutSizes, SavedTerminal } from '../domain/workspace/config.js';
 import type { CanvasRect, CanvasView, GridLayoutId, LayoutId, TrackSizes } from '../domain/workspace/layout.js';
 import type { Settings } from '../domain/workspace/settings.js';
+import type { PaneColor } from '../domain/workspace/colors.js';
+import type { TemplateInput, TerminalTemplate } from '../domain/workspace/template.js';
 
 export interface BootstrapState {
   readonly layout: LayoutId;
@@ -21,6 +23,7 @@ export interface BootstrapState {
   readonly recentDirs: string[];
   /** Comandos iniciais usados recentemente, mais recente primeiro. */
   readonly recentCommands: string[];
+  readonly templates: TerminalTemplate[];
   readonly terminals: TerminalSnapshot[];
   /** Posicao de cada terminal na area livre, por id. */
   readonly terminalRects: Record<string, CanvasRect>;
@@ -47,6 +50,7 @@ export interface MultiTermApi {
   closeTerminal(id: string): Promise<void>;
   restartTerminal(id: string, cwd?: string): Promise<void>;
   renameTerminal(id: string, name: string): Promise<void>;
+  setTerminalColor(id: string, color: PaneColor | null): Promise<void>;
   interruptTerminal(id: string): Promise<void>;
   /** Marca que voce ja viu este terminal (limpa o pedido de atencao). */
   acknowledgeTerminal(id: string): void;
@@ -56,6 +60,10 @@ export interface MultiTermApi {
   replayTerminal(id: string): Promise<ReplaySnapshot>;
   /** Persiste a posicao do terminal na area livre. */
   setTerminalRect(id: string, rect: CanvasRect | null): void;
+
+  /** Salva (ou substitui, pelo nome) um template; devolve a lista atualizada. */
+  saveTemplate(input: TemplateInput): Promise<TerminalTemplate[]>;
+  deleteTemplate(id: string): Promise<TerminalTemplate[]>;
 
   /** Sobe de novo os terminais da sessao anterior, nas mesmas posicoes. */
   restoreSession(): Promise<RestoredSession>;
@@ -121,6 +129,9 @@ export const CHANNELS = {
   textUpdate: 'text:update',
   textDelete: 'text:delete',
 
+  templateSave: 'template:save',
+  templateDelete: 'template:delete',
+
   usageGet: 'usage:get',
   usageRefresh: 'usage:refresh',
   usageUpdate: 'usage:update',
@@ -129,6 +140,7 @@ export const CHANNELS = {
   close: 'terminal:close',
   restart: 'terminal:restart',
   rename: 'terminal:rename',
+  setColor: 'terminal:set-color',
   interrupt: 'terminal:interrupt',
   acknowledge: 'terminal:acknowledge',
   write: 'terminal:write',

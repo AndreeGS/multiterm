@@ -1,3 +1,5 @@
+import type { PaneColor } from '../workspace/colors.js';
+
 /**
  * Estado de atividade de um terminal.
  * Deliberadamente "burro": nao tenta interpretar o que o agente esta fazendo,
@@ -19,6 +21,8 @@ export interface TerminalSpec {
   readonly shell?: string;
   /** Digitado no shell quando ele fica pronto (ex.: `claude`). Vazio = nenhum. */
   readonly command?: string;
+  /** Cor de destaque no cabecalho. Ausente = sem cor. */
+  readonly color?: PaneColor | null;
 }
 
 /** Projecao serializavel de uma sessao, enviada ao renderer. */
@@ -29,6 +33,7 @@ export interface TerminalSnapshot {
   readonly shell: string;
   /** Comando inicial, repetido a cada restart. `null` = so o shell. */
   readonly command: string | null;
+  readonly color: PaneColor | null;
   readonly status: TerminalStatus;
   readonly exitCode: number | null;
   readonly createdAt: number;

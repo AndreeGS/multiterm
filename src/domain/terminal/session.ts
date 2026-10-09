@@ -1,4 +1,5 @@
 import { basename } from 'node:path';
+import { parsePaneColor, type PaneColor } from '../workspace/colors.js';
 import { cleanCommand } from './command.js';
 import type { Pty, PtyFactory } from './pty.js';
 import { SignalScanner } from './signals.js';
@@ -28,6 +29,7 @@ export class TerminalSession {
   private cwd: string;
   private shell: string;
   private command: string;
+  private color: PaneColor | null;
   private status: TerminalStatus = 'starting';
   private exitCode: number | null = null;
   private size: TerminalSize = DEFAULT_SIZE;
@@ -58,6 +60,7 @@ export class TerminalSession {
     this.cwd = spec.cwd;
     this.shell = spec.shell?.trim() || ptys.defaultShell();
     this.command = cleanCommand(spec.command);
+    this.color = parsePaneColor(spec.color);
     this.name = spec.name.trim() || basename(spec.cwd) || 'terminal';
   }
 
@@ -68,6 +71,7 @@ export class TerminalSession {
       cwd: this.cwd,
       shell: this.shell,
       command: this.command || null,
+      color: this.color,
       status: this.status,
       exitCode: this.exitCode,
       createdAt: this.createdAt,
@@ -169,6 +173,12 @@ export class TerminalSession {
     const next = name.trim();
     if (!next || next === this.name) return;
     this.name = next;
+    this.emitUpdate();
+  }
+
+  setColor(color: PaneColor | null): void {
+    if (color === this.color) return;
+    this.color = color;
     this.emitUpdate();
   }
 

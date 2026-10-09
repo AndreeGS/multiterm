@@ -3,6 +3,7 @@ import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
 import type { PtyFactory } from '../../domain/terminal/pty.js';
+import type { PaneColor } from '../../domain/workspace/colors.js';
 import { TerminalSession } from '../../domain/terminal/session.js';
 import type { ReplaySnapshot, TerminalSize, TerminalSnapshot, TerminalSpec } from '../../domain/terminal/types.js';
 
@@ -74,6 +75,10 @@ export class TerminalService {
 
   rename(id: string, name: string): void {
     this.sessions.get(id)?.rename(name);
+  }
+
+  setColor(id: string, color: PaneColor | null): void {
+    this.sessions.get(id)?.setColor(color);
   }
 
   /** Reinicia o shell. `cwd` opcional troca o diretorio de trabalho. */
