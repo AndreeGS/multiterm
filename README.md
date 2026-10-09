@@ -231,10 +231,11 @@ restaurado volta com o mesmo id. Enquanto a sessao nao e restaurada o `🔗`
 aparece apagado; descartar a sessao ou fechar o terminal (`✕`) desfaz o
 vinculo.
 
-**Na area livre**, uma linha liga o `🔗` ao ponto de status do terminal,
-acompanhando arrasto, zoom e pan. Ela muda de cor com o terminal (ambar
-aguardando, roxo com pedido explicito) e some quando uma das pontas esta
-coberta por outro painel. Nas grades nao ha linha — os paineis sao vizinhos
+**Na area livre**, uma linha liga o card da nota/lista ao card do terminal,
+de borda a borda (do lado que um mostra para o outro), acompanhando arrasto,
+zoom e pan. Ela muda de cor com o terminal (ambar aguardando, roxo com pedido
+explicito) e some quando os cards se sobrepoem ou uma das pontas esta coberta
+por outro painel. Nas grades nao ha linha — os paineis sao vizinhos
 fixos e ela cruzaria o conteudo; la o nome no `🔗` basta. Da para desligar a
 linha em Configuracoes.
 

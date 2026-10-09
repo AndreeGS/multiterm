@@ -870,7 +870,7 @@ body.show-indexes .pane-header[data-index]::before {
   stroke-linecap: round;
   opacity: 0.7;
 }
-.link-layer .link-end { fill: none; stroke: var(--accent); stroke-width: 2; }
+.link-layer .link-end { fill: var(--bg); stroke: var(--accent); stroke-width: 2; }
 .link-layer .attention { stroke: var(--idle); }
 .link-layer .link-end.attention { stroke: var(--idle); }
 .link-layer .notice { stroke: var(--notice); }

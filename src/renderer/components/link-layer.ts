@@ -1,9 +1,4 @@
-/**
- * Um vinculo a desenhar: do 🔗 da nota/lista ate o ponto de status no
- * cabecalho do terminal. Ligar elementos pequenos (e nao as bordas dos
- * paineis) mantem a linha visivel mesmo com paineis vizinhos na grade ou
- * empilhados na area livre, e deixa claro qual 🔗 vai para qual terminal.
- */
+/** Um vinculo a desenhar: do card da nota/lista ao card do terminal, borda a borda. */
 export interface LinkPair {
   readonly from: HTMLElement;
   readonly to: HTMLElement;
@@ -61,11 +56,12 @@ export class LinkLayer {
       for (const pair of this.pairs()) {
         const a = visibleRect(pair.from);
         const b = visibleRect(pair.to);
-        // Um dos lados fora da tela, ou coberto por outro painel: sem linha
-        // apontando para algo que nao se ve.
-        if (!a || !b || !onTop(pair.from, a) || !onTop(pair.to, b)) continue;
-        // Sai da borda do 🔗 (o anel nao cobre o nome) e chega no centro do ponto de status.
-        shapes.push(connector(edgeToward(a, center(b)), center(b), box, pair.tone));
+        // Um card fora da tela, ou um em cima do outro: nao ha linha que faca sentido.
+        if (!a || !b || overlaps(a, b)) continue;
+        const [start, end] = facingSides(a, b);
+        // Ponta coberta por outro card: a linha apontaria para algo que nao se ve.
+        if (!visibleAt(pair.from, start) || !visibleAt(pair.to, end)) continue;
+        shapes.push(connector(start, end, box, pair.tone));
       }
     }
     if (this.draft) {
@@ -91,51 +87,59 @@ function visibleRect(element: HTMLElement): DOMRect | null {
   return rect.width > 0 && rect.height > 0 ? rect : null;
 }
 
+/** Ponto na borda de um card, com a direcao (normal) do lado em que esta. */
+interface Anchor extends Point {
+  nx: number;
+  ny: number;
+}
+
+function overlaps(a: DOMRect, b: DOMRect): boolean {
+  return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+}
+
 /**
- * Curva suave: sai e chega na horizontal quando os pontos estao mais lado a
- * lado, e na vertical quando estao mais um sobre o outro.
+ * Meio dos lados que um card mostra para o outro: lado a lado liga direita
+ * com esquerda; um acima do outro liga base com topo. Decide pela direcao
+ * que mais separa os dois, proporcional ao tamanho deles.
  */
-function connector(start: Point, end: Point, box: DOMRect, tone: LinkPair['tone']): string {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const reach = Math.max(30, Math.min(120, Math.hypot(dx, dy) / 2));
-  const horizontal = Math.abs(dx) >= Math.abs(dy);
-  const c1 = horizontal
-    ? { x: start.x + Math.sign(dx) * reach, y: start.y }
-    : { x: start.x, y: start.y + Math.sign(dy) * reach };
-  const c2 = horizontal
-    ? { x: end.x - Math.sign(dx) * reach, y: end.y }
-    : { x: end.x, y: end.y - Math.sign(dy) * reach };
+function facingSides(a: DOMRect, b: DOMRect): [Anchor, Anchor] {
+  const ca = center(a);
+  const cb = center(b);
+  const dx = cb.x - ca.x;
+  const dy = cb.y - ca.y;
+  if (Math.abs(dx) / (a.width + b.width) >= Math.abs(dy) / (a.height + b.height)) {
+    const s = Math.sign(dx) || 1;
+    return [
+      { x: s > 0 ? a.right : a.left, y: ca.y, nx: s, ny: 0 },
+      { x: s > 0 ? b.left : b.right, y: cb.y, nx: -s, ny: 0 },
+    ];
+  }
+  const s = Math.sign(dy) || 1;
+  return [
+    { x: ca.x, y: s > 0 ? a.bottom : a.top, nx: 0, ny: s },
+    { x: cb.x, y: s > 0 ? b.top : b.bottom, nx: 0, ny: -s },
+  ];
+}
+
+/** O card e o que aparece logo para dentro da borda (nada por cima ali). */
+function visibleAt(element: HTMLElement, at: Anchor): boolean {
+  const hit = document.elementFromPoint(at.x - at.nx * 4, at.y - at.ny * 4);
+  return hit !== null && (hit === element || element.contains(hit));
+}
+
+/** Curva que sai perpendicular de um card e chega perpendicular no outro. */
+function connector(start: Anchor, end: Anchor, box: DOMRect, tone: LinkPair['tone']): string {
+  const reach = Math.max(30, Math.min(140, Math.hypot(end.x - start.x, end.y - start.y) / 2));
+  const c1 = { x: start.x + start.nx * reach, y: start.y + start.ny * reach };
+  const c2 = { x: end.x + end.nx * reach, y: end.y + end.ny * reach };
   const p = (pt: Point) => `${round(pt.x - box.left)},${round(pt.y - box.top)}`;
-  return (
-    `<path class="link ${tone}" d="M${p(start)} C${p(c1)} ${p(c2)} ${p(end)}"/>` +
-    `<circle class="link-end ${tone}" cx="${round(start.x - box.left)}" cy="${round(start.y - box.top)}" r="3"/>` +
-    `<circle class="link-end ${tone}" cx="${round(end.x - box.left)}" cy="${round(end.y - box.top)}" r="5.5"/>`
-  );
+  const dot = (pt: Point) =>
+    `<circle class="link-end ${tone}" cx="${round(pt.x - box.left)}" cy="${round(pt.y - box.top)}" r="4"/>`;
+  return `<path class="link ${tone}" d="M${p(start)} C${p(c1)} ${p(c2)} ${p(end)}"/>` + dot(start) + dot(end);
 }
 
 function center(rect: DOMRect): Point {
   return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-}
-
-/** Onde a reta do centro de `rect` ate `toward` cruza a borda dele. */
-function edgeToward(rect: DOMRect, toward: Point): Point {
-  const c = center(rect);
-  const dx = toward.x - c.x;
-  const dy = toward.y - c.y;
-  if (dx === 0 && dy === 0) return c;
-  const scale = Math.min(
-    dx === 0 ? Infinity : rect.width / 2 / Math.abs(dx),
-    dy === 0 ? Infinity : rect.height / 2 / Math.abs(dy),
-  );
-  return { x: c.x + dx * scale, y: c.y + dy * scale };
-}
-
-/** O elemento e o que esta de fato visivel no seu centro (nada por cima). */
-function onTop(element: HTMLElement, rect: DOMRect): boolean {
-  const { x, y } = center(rect);
-  const hit = document.elementFromPoint(x, y);
-  return hit !== null && (hit === element || element.contains(hit) || hit.contains(element));
 }
 
 function round(value: number): number {

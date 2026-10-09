@@ -393,12 +393,9 @@ export class App {
       const target = source.terminalId ? this.panes.get(source.terminalId) : undefined;
       if (!(target instanceof TerminalPane)) continue;
       const { notice, needsAttention } = target.info;
-      const chip = source.header.querySelector<HTMLElement>('.link-chip');
-      const dot = target.header.querySelector<HTMLElement>('.status-dot');
-      if (!chip || !dot) continue;
       pairs.push({
-        from: chip,
-        to: dot,
+        from: source.element,
+        to: target.element,
         tone: notice ? 'notice' : needsAttention ? 'attention' : 'normal',
       });
     }
