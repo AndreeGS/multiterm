@@ -12,6 +12,7 @@ import type { CanvasRect, CanvasView, GridLayoutId, LayoutId, TrackSizes } from 
 import type { Settings } from '../domain/workspace/settings.js';
 import type { PaneColor } from '../domain/workspace/colors.js';
 import type { TemplateInput, TerminalTemplate } from '../domain/workspace/template.js';
+import type { GitInfo, WorktreeInfo } from '../domain/git/worktree.js';
 
 export interface BootstrapState {
   readonly layout: LayoutId;
@@ -46,7 +47,11 @@ export interface MultiTermApi {
   /** Abre o seletor de diretorio nativo. `null` se cancelado. */
   pickDirectory(startIn?: string): Promise<string | null>;
 
-  createTerminal(spec: TerminalSpec): Promise<TerminalSnapshot>;
+  /**
+   * Com `worktreeBranch`, o main cria (ou reaproveita) um worktree com essa
+   * branch e o terminal abre nele. Rejeita com a mensagem do git se falhar.
+   */
+  createTerminal(spec: TerminalSpec, worktreeBranch?: string): Promise<TerminalSnapshot>;
   closeTerminal(id: string): Promise<void>;
   restartTerminal(id: string, cwd?: string): Promise<void>;
   renameTerminal(id: string, name: string): Promise<void>;
@@ -60,6 +65,13 @@ export interface MultiTermApi {
   replayTerminal(id: string): Promise<ReplaySnapshot>;
   /** Persiste a posicao do terminal na area livre. */
   setTerminalRect(id: string, rect: CanvasRect | null): void;
+
+  /** Repo e branch do diretorio (para oferecer o worktree no dialogo). */
+  gitInfo(cwd: string): Promise<GitInfo>;
+  /** O worktree tem mudancas nao commitadas? */
+  worktreeDirty(worktree: WorktreeInfo): Promise<boolean>;
+  /** Apaga a pasta do worktree (a branch fica). `force` descarta mudancas. */
+  removeWorktree(worktree: WorktreeInfo, force: boolean): Promise<void>;
 
   /** Salva (ou substitui, pelo nome) um template; devolve a lista atualizada. */
   saveTemplate(input: TemplateInput): Promise<TerminalTemplate[]>;
@@ -128,6 +140,10 @@ export const CHANNELS = {
   textCreate: 'text:create',
   textUpdate: 'text:update',
   textDelete: 'text:delete',
+
+  gitInfo: 'git:info',
+  worktreeDirty: 'git:worktree-dirty',
+  worktreeRemove: 'git:worktree-remove',
 
   templateSave: 'template:save',
   templateDelete: 'template:delete',

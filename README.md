@@ -102,6 +102,31 @@ conversa salva para o diretorio em `~/.claude/projects` (ou `$CLAUDE_CONFIG_DIR`
 O comando inicial nao arma o aviso de ocioso: um agente recem-aberto esperando
 instrucao nao e motivo de alerta.
 
+## Worktree por terminal
+
+Para deixar um agente trabalhar sem mexer na sua copia do repositorio: no
+dialogo de novo terminal, quando o diretorio esta num repositorio git, aparece
+**Worktree isolado**. Marcando, voce escolhe a branch (sugerida a partir do
+nome do terminal) e o app:
+
+- cria o worktree em `<pai>/<repo>.worktrees/<branch>`, ao lado do repo (fora
+  dele, nada para por no `.gitignore`), com a branch nova a partir do HEAD.
+  Se a branch ja existe, usa ela; se ja tem um worktree, reaproveita;
+- abre o terminal la dentro. O cabecalho mostra `⎇ <branch>`.
+
+Ao fechar (`✕`) um terminal com worktree, o app pergunta se remove a pasta,
+avisando se ha mudancas nao commitadas. **A branch nunca e apagada**: o que foi
+commitado continua no repositorio. Se outro terminal ainda esta no mesmo
+worktree, nem pergunta. Na paleta: `Fechar "<terminal>" e remover o worktree`.
+
+Um template salvo com worktree guarda o diretorio do repo; abrir o template
+mostra o dialogo preenchido, pedindo so a branch.
+
+O app chama o `git` da maquina sempre com argumentos em lista, sem shell, e
+com `core.fsmonitor` desligado (o dialogo consulta o git em qualquer diretorio
+digitado). Para remover, confere antes que a pasta e mesmo um worktree daquele
+repo e nao a copia principal.
+
 ## Templates
 
 Um template guarda diretorio, comando inicial, nome e cor de um terminal que
@@ -389,6 +414,7 @@ src/
     notes/         formato e validacao das notas
     canvas/        formato e validacao dos textos soltos
     tasks/         formato e validacao das listas de tarefas
+    git/           worktrees: porta Git, caminho, nome de branch, parse do porcelain
   application/     casos de uso (orquestram o dominio)
     terminal/      TerminalService — unico dono do conjunto de sessoes
     workspace/     WorkspaceService — preferencias, com save debounced
@@ -420,7 +446,8 @@ Regras que mantem o acoplamento baixo:
 - O renderer nao tem acesso a Node: `contextIsolation` ligado e uma API unica
   exposta pelo `preload`, tipada em `shared/contract.ts`.
 - Nada e executado automaticamente. O app so sobe o shell que voce pediu, no
-  diretorio que voce escolheu.
+  diretorio que voce escolheu. O unico outro processo e o `git`, e so quando
+  voce pede um worktree (porta `Git` em `domain/git`, adaptador `GitCli`).
 
 ## Proximos passos naturais
 

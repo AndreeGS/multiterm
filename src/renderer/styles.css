@@ -969,3 +969,9 @@ button.swatch.selected:hover:not(:disabled) { border-color: var(--fg); }
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- worktree ---------- */
+.worktree-row { display: flex; flex-direction: column; gap: 6px; }
+.modal .worktree-row input[type="text"]:disabled { opacity: 0.45; }
+.modal input[type="text"].invalid { border-color: var(--error); }
+.wt-hint { font-size: 11px; color: var(--fg-dim); }

@@ -2,12 +2,15 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { WorktreeService } from '../application/git/worktree-service.js';
 import { TerminalService } from '../application/terminal/terminal-service.js';
 import { NotesService } from '../application/notes/notes-service.js';
 import { TextsService } from '../application/canvas/texts-service.js';
 import { TasksService } from '../application/tasks/tasks-service.js';
 import { UsageService } from '../application/usage/usage-service.js';
 import { WorkspaceService } from '../application/workspace/workspace-service.js';
+import { parseWorktreeInfo } from '../domain/git/worktree.js';
 import type { NotePatch } from '../domain/notes/note.js';
 import type { CanvasTextPatch } from '../domain/canvas/text.js';
 import type { TaskListPatch } from '../domain/tasks/task-list.js';
@@ -29,6 +32,7 @@ import { JsonConfigStore } from '../infrastructure/persistence/json-config-store
 import { JsonNotesStore } from '../infrastructure/persistence/json-notes-store.js';
 import { JsonTextsStore } from '../infrastructure/persistence/json-texts-store.js';
 import { JsonTasksStore } from '../infrastructure/persistence/json-tasks-store.js';
+import { GitCli } from '../infrastructure/git/git-cli.js';
 import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
 import { hasClaudeTranscript, hasProjectConversations } from '../infrastructure/usage/claude-paths.js';
 import { CHANNELS, type BootstrapState, type RestoredSession } from '../shared/contract.js';
@@ -43,6 +47,7 @@ let usage: UsageService;
 let notes: NotesService;
 let texts: TextsService;
 let tasks: TasksService;
+const worktrees = new WorktreeService(new GitCli());
 const output = new OutputBatcher((batch) => send(CHANNELS.data, batch));
 /** Posicao de cada terminal na area livre. Vive aqui porque a sessao nao sabe de layout. */
 const terminalRects = new Map<string, CanvasRect>();
@@ -114,6 +119,7 @@ function persistTerminals(): void {
     ...(snapshot.command ? { command: snapshot.command } : {}),
     ...(snapshot.color ? { color: snapshot.color } : {}),
     ...(snapshot.claudeSession ? { claudeSession: snapshot.claudeSession } : {}),
+    ...(snapshot.worktree ? { worktree: snapshot.worktree } : {}),
     rect: terminalRects.get(snapshot.id) ?? null,
   }));
   workspace.setTerminals([...live, ...pendingSession]);
@@ -134,6 +140,8 @@ function restoreSession(): RestoredSession {
         command: entry.command && !entry.claudeSession ? resumeCommand(entry.command, entry.cwd) : entry.command,
         color: entry.color ?? null,
         claudeSession: entry.claudeSession ?? null,
+        // Pasta removida por fora: o terminal abre no home, sem worktree.
+        worktree: entry.worktree && existsSync(entry.worktree.path) ? entry.worktree : null,
       }, undefined, entry.id);
       restored.terminals.push(snapshot);
       if (entry.rect) {
@@ -197,9 +205,16 @@ function registerIpc(): void {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
-  ipcMain.handle(CHANNELS.create, (_event, spec: TerminalSpec) => {
-    const snapshot = terminals.create(spec);
-    workspace.rememberDir(snapshot.cwd);
+  ipcMain.handle(CHANNELS.create, async (_event, spec: TerminalSpec, worktreeBranch?: unknown) => {
+    // O worktree do spec so pode vir daqui: o renderer pede pela branch.
+    let resolved: TerminalSpec = { ...spec, worktree: null };
+    if (typeof worktreeBranch === 'string' && worktreeBranch.trim()) {
+      const worktree = await worktrees.create(spec.cwd, worktreeBranch.trim());
+      resolved = { ...spec, cwd: worktree.path, worktree };
+    }
+    const snapshot = terminals.create(resolved);
+    // O recente e o diretorio que voce escolheu, nao a pasta do worktree.
+    workspace.rememberDir(snapshot.worktree ? snapshot.worktree.repo : snapshot.cwd);
     if (snapshot.command) workspace.rememberCommand(snapshot.command);
     persistTerminals();
     return snapshot;
@@ -213,6 +228,17 @@ function registerIpc(): void {
   ipcMain.handle(CHANNELS.rename, (_event, id: string, name: string) => terminals.rename(id, name));
   ipcMain.handle(CHANNELS.setColor, (_event, id: string, color: unknown) => {
     terminals.setColor(id, parsePaneColor(color));
+  });
+  ipcMain.handle(CHANNELS.gitInfo, (_event, cwd: unknown) =>
+    typeof cwd === 'string' && cwd ? worktrees.info(cwd) : { repo: null, branch: null });
+  ipcMain.handle(CHANNELS.worktreeDirty, (_event, raw: unknown) => {
+    const worktree = parseWorktreeInfo(raw);
+    return worktree ? worktrees.isDirty(worktree) : false;
+  });
+  ipcMain.handle(CHANNELS.worktreeRemove, async (_event, raw: unknown, force: unknown) => {
+    const worktree = parseWorktreeInfo(raw);
+    if (!worktree) throw new Error('Worktree invalido.');
+    await worktrees.remove(worktree, force === true);
   });
   ipcMain.handle(CHANNELS.templateSave, (_event, input: unknown) => {
     const template = parseTemplate(input, randomUUID());

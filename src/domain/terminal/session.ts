@@ -1,4 +1,5 @@
 import { basename } from 'node:path';
+import { parseWorktreeInfo, type WorktreeInfo } from '../git/worktree.js';
 import { parsePaneColor, type PaneColor } from '../workspace/colors.js';
 import { claudeLaunchCommand, cleanCommand, parseSessionId, sessionIdOf, wantsOwnSession } from './command.js';
 import type { Pty, PtyFactory } from './pty.js';
@@ -34,6 +35,7 @@ export class TerminalSession {
   private command: string;
   private color: PaneColor | null;
   private readonly claudeSession: string | null;
+  private readonly worktree: WorktreeInfo | null;
   /** O que de fato e digitado no shell (o comando com a conversa escolhida). */
   private launch = '';
   private status: TerminalStatus = 'starting';
@@ -68,6 +70,7 @@ export class TerminalSession {
     this.shell = spec.shell?.trim() || ptys.defaultShell();
     this.command = cleanCommand(spec.command);
     this.color = parsePaneColor(spec.color);
+    this.worktree = parseWorktreeInfo(spec.worktree);
     // Um `claude` puro ganha a conversa que o servico escolheu; um que ja
     // escolhe a sua por id (`--resume X`) so e acompanhado.
     this.claudeSession = wantsOwnSession(this.command)
@@ -85,6 +88,7 @@ export class TerminalSession {
       command: this.command || null,
       color: this.color,
       claudeSession: this.claudeSession,
+      worktree: this.worktree,
       status: this.status,
       exitCode: this.exitCode,
       createdAt: this.createdAt,

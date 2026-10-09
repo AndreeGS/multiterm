@@ -16,6 +16,7 @@ const template = (id: string, name: string, extra: Partial<TerminalTemplate> = {
   cwd: '/srv/api',
   command: 'claude',
   color: null,
+  worktree: false,
   ...extra,
 });
 
@@ -46,6 +47,7 @@ describe('templates', () => {
       cwd: '/srv',
       command: 'npm run dev',
       color: null,
+      worktree: false,
     });
     assert.equal(parseTemplate({ name: '', cwd: '/srv' }, 'id'), null);
     assert.equal(parseTemplate({ name: 'x' }, 'id'), null);

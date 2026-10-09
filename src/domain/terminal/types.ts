@@ -1,3 +1,4 @@
+import type { WorktreeInfo } from '../git/worktree.js';
 import type { PaneColor } from '../workspace/colors.js';
 
 /**
@@ -29,6 +30,8 @@ export interface TerminalSpec {
    * tokens pode ser atribuido ao terminal.
    */
   readonly claudeSession?: string | null;
+  /** Worktree onde o terminal roda (o cwd e a pasta dele). Quem cria e o main. */
+  readonly worktree?: WorktreeInfo | null;
 }
 
 /** Projecao serializavel de uma sessao, enviada ao renderer. */
@@ -42,6 +45,8 @@ export interface TerminalSnapshot {
   readonly color: PaneColor | null;
   /** Conversa do Claude Code acompanhada neste terminal; `null` = nenhuma. */
   readonly claudeSession: string | null;
+  /** Worktree isolado do terminal; `null` = roda direto no diretorio. */
+  readonly worktree: WorktreeInfo | null;
   readonly status: TerminalStatus;
   readonly exitCode: number | null;
   readonly createdAt: number;

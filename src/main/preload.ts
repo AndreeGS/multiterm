@@ -22,7 +22,8 @@ const api: MultiTermApi = {
   bootstrap: () => ipcRenderer.invoke(CHANNELS.bootstrap) as Promise<BootstrapState>,
   pickDirectory: (startIn) => ipcRenderer.invoke(CHANNELS.pickDirectory, startIn),
 
-  createTerminal: (spec: TerminalSpec) => ipcRenderer.invoke(CHANNELS.create, spec),
+  createTerminal: (spec: TerminalSpec, worktreeBranch?: string) =>
+    ipcRenderer.invoke(CHANNELS.create, spec, worktreeBranch),
   closeTerminal: (id) => ipcRenderer.invoke(CHANNELS.close, id),
   restartTerminal: (id, cwd) => ipcRenderer.invoke(CHANNELS.restart, id, cwd),
   renameTerminal: (id, name) => ipcRenderer.invoke(CHANNELS.rename, id, name),
@@ -34,6 +35,9 @@ const api: MultiTermApi = {
   writeTerminal: (id, data) => ipcRenderer.send(CHANNELS.write, id, data),
   resizeTerminal: (id, cols, rows) => ipcRenderer.send(CHANNELS.resize, id, cols, rows),
   setTerminalRect: (id, rect: CanvasRect | null) => ipcRenderer.send(CHANNELS.setRect, id, rect),
+  gitInfo: (cwd) => ipcRenderer.invoke(CHANNELS.gitInfo, cwd),
+  worktreeDirty: (worktree) => ipcRenderer.invoke(CHANNELS.worktreeDirty, worktree),
+  removeWorktree: (worktree, force) => ipcRenderer.invoke(CHANNELS.worktreeRemove, worktree, force),
   saveTemplate: (input) => ipcRenderer.invoke(CHANNELS.templateSave, input),
   deleteTemplate: (id) => ipcRenderer.invoke(CHANNELS.templateDelete, id),
   restoreSession: () => ipcRenderer.invoke(CHANNELS.sessionRestore),
