@@ -12,6 +12,8 @@ export interface TerminalTemplate {
   /** Vazio = so o shell. */
   readonly command: string;
   readonly color: PaneColor | null;
+  /** Abre num worktree isolado (o dialogo pergunta a branch). */
+  readonly worktree: boolean;
 }
 
 /** O que o usuario preenche; o id vem de quem cria. */
@@ -27,7 +29,14 @@ export function parseTemplate(raw: unknown, id: string): TerminalTemplate | null
   const name = typeof input.name === 'string' ? input.name.trim().slice(0, MAX_TEMPLATE_NAME) : '';
   const cwd = typeof input.cwd === 'string' ? input.cwd.trim() : '';
   if (!name || !cwd) return null;
-  return { id, name, cwd, command: cleanCommand(input.command), color: parsePaneColor(input.color) };
+  return {
+    id,
+    name,
+    cwd,
+    command: cleanCommand(input.command),
+    color: parsePaneColor(input.color),
+    worktree: input.worktree === true,
+  };
 }
 
 /** Lista vinda do config: invalidos e ids/nomes repetidos ficam de fora. */

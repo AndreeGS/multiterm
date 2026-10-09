@@ -151,9 +151,9 @@ export class TerminalPane implements Panel {
     this.snapshot = snapshot;
     this.nameEl.textContent = snapshot.name;
     // Um pedido explicito do agente toma o lugar do diretorio ate voce olhar.
-    const place = shortenPath(snapshot.cwd) + (snapshot.command ? ` · ${snapshot.command}` : '');
-    this.cwdEl.textContent = snapshot.notice ? `🔔 ${snapshot.notice}` : place;
+    this.cwdEl.textContent = snapshot.notice ? `🔔 ${snapshot.notice}` : terminalPlace(snapshot);
     this.cwdEl.title = `${snapshot.cwd}  (${snapshot.shell})` +
+      (snapshot.worktree ? `\nWorktree da branch ${snapshot.worktree.branch}, de ${snapshot.worktree.repo}` : '') +
       (snapshot.command ? `\nComando inicial: ${snapshot.command}` : '');
     this.dot.dataset.status = snapshot.status;
     this.element.classList.toggle('attention', snapshot.needsAttention);
@@ -325,4 +325,11 @@ export class TerminalPane implements Panel {
     }
     return true;
   }
+}
+
+/** `~/repo.worktrees/feat-x · ⎇ feat-x · claude`: onde roda, em que branch isolada, o que roda. */
+export function terminalPlace(snapshot: TerminalSnapshot): string {
+  return shortenPath(snapshot.cwd) +
+    (snapshot.worktree ? ` · ⎇ ${snapshot.worktree.branch}` : '') +
+    (snapshot.command ? ` · ${snapshot.command}` : '');
 }

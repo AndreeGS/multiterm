@@ -2,6 +2,7 @@ import type { Note } from '../domain/notes/note.js';
 import type { TaskList } from '../domain/tasks/task-list.js';
 import type { TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js';
 import type { TerminalTemplate } from '../domain/workspace/template.js';
+import type { WorktreeInfo } from '../domain/git/worktree.js';
 import type { UsageSummary, UsageTotals } from '../domain/usage/types.js';
 import { capacity, isGridLayout, layoutFor, type CanvasRect, type LayoutId } from '../domain/workspace/layout.js';
 import type { SavedTerminal } from '../domain/workspace/config.js';
@@ -17,7 +18,7 @@ import { NotePane } from './components/note-pane.js';
 import { openSettingsDialog } from './components/settings-dialog.js';
 import type { Board, LinkLabel, Panel } from './components/panel.js';
 import { TaskPane } from './components/task-pane.js';
-import { TerminalPane } from './components/terminal-pane.js';
+import { terminalPlace, TerminalPane } from './components/terminal-pane.js';
 import { Toolbar } from './components/toolbar.js';
 import { setHomeDir, shortenPath } from './paths.js';
 import { matchShortcut, type Shortcut } from './shortcuts.js';
@@ -271,6 +272,9 @@ export class App {
     const focusedPane = focused ? this.panes.get(focused) : undefined;
     if (focusedPane instanceof TerminalPane) {
       items.push({ label: `Cor de "${focusedPane.name}"`, run: () => void focusedPane.pickColor() });
+      if (focusedPane.info.worktree) {
+        items.push({ label: `Fechar "${focusedPane.name}" e remover o worktree`, run: () => void this.closePane(focusedPane.id) });
+      }
     }
     if (focusedPane instanceof NotePane || focusedPane instanceof TaskPane) {
       items.push({ label: `Vincular "${paneLabel(focusedPane)}" a um terminal`, run: () => void this.pickLink(focusedPane.id) });
@@ -475,7 +479,7 @@ export class App {
     return Boolean(target?.closest('.pane-body:not(.note-body):not(.tasks-body)'));
   }
 
-  private async promptNewTerminal(): Promise<void> {
+  private async promptNewTerminal(initial?: TerminalTemplate): Promise<void> {
     if (this.dialogOpen) return;
     this.dialogOpen = true;
     try {
@@ -484,16 +488,19 @@ export class App {
         defaultDir: this.defaultDir,
         recentCommands: this.recentCommands,
         templates: this.templates,
+        ...(initial ? { initial } : {}),
       });
       if (!result) return;
-      const snapshot = await this.openTerminal(result.spec);
-      if (result.saveAsTemplate) {
+      const snapshot = await this.openTerminal(result.spec, result.worktreeBranch);
+      if (snapshot && result.saveAsTemplate) {
         // Sem nome digitado, o template leva o nome que o terminal ganhou.
+        // Com worktree, guarda o diretorio escolhido, nao a pasta criada.
         this.templates = await this.api.saveTemplate({
           name: snapshot.name,
-          cwd: snapshot.cwd,
+          cwd: snapshot.worktree ? result.spec.cwd : snapshot.cwd,
           command: snapshot.command ?? '',
           color: snapshot.color,
+          worktree: snapshot.worktree !== null,
         });
       }
     } finally {
@@ -501,9 +508,16 @@ export class App {
     }
   }
 
-  private async openTerminal(spec: TerminalSpec): Promise<TerminalSnapshot> {
-    const snapshot = await this.api.createTerminal(spec);
-    this.rememberDir(snapshot.cwd);
+  /** Cria o terminal; `null` se o main recusar (ex.: o git nao criou o worktree). */
+  private async openTerminal(spec: TerminalSpec, worktreeBranch: string | null = null): Promise<TerminalSnapshot | null> {
+    let snapshot: TerminalSnapshot;
+    try {
+      snapshot = await this.api.createTerminal(spec, worktreeBranch ?? undefined);
+    } catch (error) {
+      window.alert(`Nao foi possivel abrir o terminal:\n${ipcErrorMessage(error)}`);
+      return null;
+    }
+    this.rememberDir(snapshot.worktree ? snapshot.worktree.repo : snapshot.cwd);
     if (snapshot.command) {
       this.recentCommands = [snapshot.command, ...this.recentCommands.filter((c) => c !== snapshot.command)].slice(0, 8);
     }
@@ -517,12 +531,10 @@ export class App {
     return this.templates.map((template) => ({
       label: `Novo: ${template.name}`,
       detail: shortenPath(template.cwd) + (template.command ? ` · ${template.command}` : ''),
-      run: () => void this.openTerminal({
-        name: template.name,
-        cwd: template.cwd,
-        command: template.command,
-        color: template.color,
-      }),
+      // Com worktree falta a branch: o dialogo abre preenchido, pedindo so ela.
+      run: () => void (template.worktree
+        ? this.promptNewTerminal(template)
+        : this.openTerminal({ name: template.name, cwd: template.cwd, command: template.command, color: template.color })),
     }));
   }
 
@@ -608,7 +620,33 @@ export class App {
       this.removePane(id);
       return;
     }
+    const worktree = pane instanceof TerminalPane ? pane.info.worktree : null;
     await this.api.closeTerminal(id);
+    if (worktree) await this.offerWorktreeRemoval(worktree);
+  }
+
+  /**
+   * Fechou um terminal num worktree: pergunta se apaga a pasta. A branch
+   * sempre fica. Outro terminal ainda no mesmo worktree: nem pergunta.
+   */
+  private async offerWorktreeRemoval(worktree: WorktreeInfo): Promise<void> {
+    if (this.terminalPanes().some((pane) => pane.info.worktree?.path === worktree.path)) return;
+    let dirty: boolean;
+    try {
+      dirty = await this.api.worktreeDirty(worktree);
+    } catch {
+      return; // pasta ja removida por fora
+    }
+    const where = `${worktree.branch} (${shortenPath(worktree.path)})`;
+    const question = dirty
+      ? `O worktree ${where} tem mudancas NAO commitadas.\n\nRemover a pasta mesmo assim? As mudancas serao perdidas; a branch continua no repositorio.`
+      : `Remover tambem o worktree ${where}?\n\nA pasta e apagada; a branch continua no repositorio.`;
+    if (!window.confirm(question)) return;
+    try {
+      await this.api.removeWorktree(worktree, dirty);
+    } catch (error) {
+      window.alert(`Nao foi possivel remover o worktree:\n${ipcErrorMessage(error)}`);
+    }
   }
 
   /**
@@ -782,12 +820,18 @@ function paneLabel(pane: Panel): string {
   return pane.header.querySelector('.pane-name')?.textContent || 'painel';
 }
 
+/** O Electron embrulha o erro do main: "Error invoking remote method 'x': Error: <mensagem>". */
+function ipcErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '');
+}
+
 function paneDetail(pane: Panel): string {
   if (pane instanceof TerminalPane) {
-    const { cwd, command, notice } = pane.info;
+    const { notice } = pane.info;
     if (notice) return `🔔 ${notice}`;
     const usage = pane.usageText;
-    return `terminal · ${shortenPath(cwd)}${command ? ` · ${command}` : ''}${usage ? ` · ${usage}` : ''}`;
+    return `terminal · ${terminalPlace(pane.info)}${usage ? ` · ${usage}` : ''}`;
   }
   if (pane instanceof NotePane) return 'nota';
   if (pane instanceof TaskPane) return 'tarefas';

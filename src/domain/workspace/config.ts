@@ -12,6 +12,7 @@ import {
   type LayoutId,
   type TrackSizes,
 } from './layout.js';
+import { parseWorktreeInfo, type WorktreeInfo } from '../git/worktree.js';
 import { parsePaneColor, type PaneColor } from './colors.js';
 import { defaultSettings, parseSettings, type Settings } from './settings.js';
 import { parseTemplates, type TerminalTemplate } from './template.js';
@@ -39,6 +40,8 @@ export interface SavedTerminal {
   color?: PaneColor;
   /** Conversa do Claude Code do terminal: restaurar retoma exatamente ela. */
   claudeSession?: string;
+  /** Worktree do terminal; restaurar volta para ele, se a pasta ainda existir. */
+  worktree?: WorktreeInfo;
   rect: CanvasRect | null;
 }
 
@@ -147,6 +150,8 @@ function parseSavedTerminal(raw: unknown): SavedTerminal | null {
   if (color) saved.color = color;
   const claudeSession = parseSessionId(input.claudeSession);
   if (claudeSession) saved.claudeSession = claudeSession;
+  const worktree = parseWorktreeInfo(input.worktree);
+  if (worktree) saved.worktree = worktree;
   return saved;
 }
 
