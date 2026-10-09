@@ -1,3 +1,4 @@
+import { cleanCommand } from '../terminal/command.js';
 import {
   DEFAULT_LAYOUT,
   GRID_LAYOUTS,
@@ -25,9 +26,13 @@ export interface WindowBounds {
  * abertura sobe um shell novo com o mesmo nome, diretorio e posicao.
  */
 export interface SavedTerminal {
+  /** Reusado ao restaurar: e por ele que notas e listas se vinculam. */
+  id?: string;
   name: string;
   cwd: string;
   shell?: string;
+  /** Comando inicial (ex.: `claude`); ausente = so o shell. */
+  command?: string;
   rect: CanvasRect | null;
 }
 
@@ -40,6 +45,8 @@ export interface AppConfig {
   layoutSizes: LayoutSizes;
   /** Diretorios usados recentemente, mais recente primeiro. */
   recentDirs: string[];
+  /** Comandos iniciais usados recentemente, mais recente primeiro. */
+  recentCommands: string[];
   /** Terminais para reabrir, na ordem de criacao. */
   terminals: SavedTerminal[];
   /** Pan e zoom da area livre. Ausente = origem em 100%. */
@@ -49,6 +56,7 @@ export interface AppConfig {
 }
 
 export const MAX_RECENT_DIRS = 12;
+export const MAX_RECENT_COMMANDS = 8;
 
 export function defaultConfig(): AppConfig {
   return {
@@ -56,6 +64,7 @@ export function defaultConfig(): AppConfig {
     layout: DEFAULT_LAYOUT,
     layoutSizes: {},
     recentDirs: [],
+    recentCommands: [],
     terminals: [],
     canvasView: null,
     settings: defaultSettings(),
@@ -92,6 +101,13 @@ export function parseConfig(raw: unknown): AppConfig {
       .slice(0, MAX_RECENT_DIRS);
   }
 
+  if (Array.isArray(input.recentCommands)) {
+    base.recentCommands = input.recentCommands
+      .map(cleanCommand)
+      .filter((command) => command.length > 0)
+      .slice(0, MAX_RECENT_COMMANDS);
+  }
+
   if (Array.isArray(input.terminals)) {
     base.terminals = input.terminals
       .map(parseSavedTerminal)
@@ -109,12 +125,21 @@ function parseSavedTerminal(raw: unknown): SavedTerminal | null {
   const input = raw as Record<string, unknown>;
   if (typeof input.cwd !== 'string' || !input.cwd) return null;
   const saved: SavedTerminal = {
+    ...(typeof input.id === 'string' && input.id ? { id: input.id } : {}),
     name: typeof input.name === 'string' ? input.name : '',
     cwd: input.cwd,
     rect: parseCanvasRect(input.rect),
   };
   if (typeof input.shell === 'string' && input.shell) saved.shell = input.shell;
+  const command = cleanCommand(input.command);
+  if (command) saved.command = command;
   return saved;
+}
+
+export function withRecentCommand(config: AppConfig, command: string): AppConfig {
+  const recentCommands = [command, ...config.recentCommands.filter((c) => c !== command)]
+    .slice(0, MAX_RECENT_COMMANDS);
+  return { ...config, recentCommands };
 }
 
 export function withRecentDir(config: AppConfig, dir: string): AppConfig {

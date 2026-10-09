@@ -1,5 +1,7 @@
 import { basename } from 'node:path';
+import { cleanCommand } from './command.js';
 import type { Pty, PtyFactory } from './pty.js';
+import { SignalScanner } from './signals.js';
 import type { TerminalSize, TerminalSnapshot, TerminalSpec, TerminalStatus } from './types.js';
 
 export interface SessionEvents {
@@ -24,6 +26,7 @@ export class TerminalSession {
   private name: string;
   private cwd: string;
   private shell: string;
+  private command: string;
   private status: TerminalStatus = 'starting';
   private exitCode: number | null = null;
   private size: TerminalSize = DEFAULT_SIZE;
@@ -36,6 +39,11 @@ export class TerminalSession {
   private attention = false;
   private disposed = false;
   private armed = false;
+  /** Mensagem de um pedido explicito de atencao (BEL/OSC), ate voce olhar. */
+  private notice: string | null = null;
+  private scanner = new SignalScanner();
+  /** O comando inicial espera o shell imprimir algo (o prompt) antes de ser digitado. */
+  private commandPending = false;
 
   constructor(
     id: string,
@@ -46,6 +54,7 @@ export class TerminalSession {
     this.id = id;
     this.cwd = spec.cwd;
     this.shell = spec.shell?.trim() || ptys.defaultShell();
+    this.command = cleanCommand(spec.command);
     this.name = spec.name.trim() || basename(spec.cwd) || 'terminal';
   }
 
@@ -55,10 +64,12 @@ export class TerminalSession {
       name: this.name,
       cwd: this.cwd,
       shell: this.shell,
+      command: this.command || null,
       status: this.status,
       exitCode: this.exitCode,
       createdAt: this.createdAt,
-      needsAttention: this.attention,
+      needsAttention: this.attention || this.notice !== null,
+      notice: this.notice,
     };
   }
 
@@ -76,6 +87,8 @@ export class TerminalSession {
     if (size) this.size = size;
 
     this.exitCode = null;
+    this.scanner = new SignalScanner();
+    this.commandPending = this.command.length > 0;
     this.setStatus('starting');
 
     try {
@@ -97,7 +110,16 @@ export class TerminalSession {
       if (this.disposed) return;
       this.pushReplay(chunk);
       this.events.onData(this.id, chunk);
+      const signal = this.scanner.scan(chunk);
       this.markActive();
+      if (signal) this.raiseNotice(signal);
+      if (this.commandPending) {
+        // O rc do shell ja rodou e o prompt apareceu: agora o comando entra
+        // como se voce tivesse digitado. Nao arma o aviso de ocioso — um
+        // agente recem-aberto esperando instrucao nao e novidade para ninguem.
+        this.commandPending = false;
+        this.pty?.write(`${this.command}\r`);
+      }
     });
 
     this.pty.onExit((code) => {
@@ -123,6 +145,11 @@ export class TerminalSession {
     // Sem isto, o prompt do shell de um terminal recem-criado ja dispararia o
     // aviso, e varias abas novas apareceriam como "aguardando" sem motivo.
     this.armed = true;
+    // Digitar e responder: o pedido explicito ja foi atendido.
+    if (this.notice !== null) {
+      this.notice = null;
+      this.emitUpdate();
+    }
     this.pty?.write(data);
   }
 
@@ -148,6 +175,7 @@ export class TerminalSession {
   restart(cwd?: string): void {
     if (cwd) this.cwd = cwd;
     this.armed = false;
+    this.notice = null;
     if (!this.pty) {
       this.replay = [];
       this.replayBytes = 0;
@@ -203,8 +231,19 @@ export class TerminalSession {
 
   /** Marca que voce ja viu este terminal. */
   acknowledge(): void {
-    if (!this.attention) return;
+    if (!this.attention && this.notice === null) return;
     this.attention = false;
+    this.notice = null;
+    this.emitUpdate();
+  }
+
+  /**
+   * Pedido explicito (BEL/OSC). Vale mesmo sem o aviso armado, e nao e
+   * apagado pelo output seguinte: TUIs redesenham a tela depois de avisar.
+   */
+  private raiseNotice(message: string): void {
+    if (this.notice === message) return;
+    this.notice = message;
     this.emitUpdate();
   }
 

@@ -10,6 +10,8 @@ export interface Settings {
   fontSize: number;
   /** Escala da interface (barra, cabecalhos, dialogos). 1 = normal. */
   uiScale: number;
+  /** Linha ligando cada nota/lista ao terminal vinculado (so na area livre). */
+  showLinks: boolean;
 }
 
 export const FONT_SIZE_MIN = 9;
@@ -17,7 +19,7 @@ export const FONT_SIZE_MAX = 24;
 export const UI_SCALES: readonly number[] = [0.9, 1, 1.1, 1.25, 1.4];
 
 export function defaultSettings(): Settings {
-  return { theme: 'dark', fontSize: 12, uiScale: 1 };
+  return { theme: 'dark', fontSize: 12, uiScale: 1, showLinks: true };
 }
 
 export function isTheme(value: unknown): value is ThemeId {
@@ -36,6 +38,7 @@ export function parseSettings(raw: unknown): Settings {
   if (typeof input.uiScale === 'number' && UI_SCALES.includes(input.uiScale)) {
     base.uiScale = input.uiScale;
   }
+  if (typeof input.showLinks === 'boolean') base.showLinks = input.showLinks;
   return base;
 }
 

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { TerminalService } from '../application/terminal/terminal-service.js';
@@ -10,6 +11,7 @@ import { WorkspaceService } from '../application/workspace/workspace-service.js'
 import type { NotePatch } from '../domain/notes/note.js';
 import type { CanvasTextPatch } from '../domain/canvas/text.js';
 import type { TaskListPatch } from '../domain/tasks/task-list.js';
+import { claudeProjectKey, isClaudeCommand, withContinue } from '../domain/terminal/command.js';
 import type { TerminalSpec } from '../domain/terminal/types.js';
 import type { SavedTerminal } from '../domain/workspace/config.js';
 import {
@@ -100,9 +102,11 @@ function persistBounds(): void {
 function persistTerminals(): void {
   if (restoring) return;
   const live = terminals.list().map((snapshot) => ({
+    id: snapshot.id,
     name: snapshot.name,
     cwd: snapshot.cwd,
     shell: snapshot.shell,
+    ...(snapshot.command ? { command: snapshot.command } : {}),
     rect: terminalRects.get(snapshot.id) ?? null,
   }));
   workspace.setTerminals([...live, ...pendingSession]);
@@ -115,7 +119,12 @@ function restoreSession(): RestoredSession {
   try {
     pendingSession = [];
     for (const entry of saved) {
-      const snapshot = terminals.create({ name: entry.name, cwd: entry.cwd, shell: entry.shell });
+      const snapshot = terminals.create({
+        name: entry.name,
+        cwd: entry.cwd,
+        shell: entry.shell,
+        command: entry.command ? resumeCommand(entry.command, entry.cwd) : undefined,
+      }, undefined, entry.id);
       restored.terminals.push(snapshot);
       if (entry.rect) {
         terminalRects.set(snapshot.id, entry.rect);
@@ -129,6 +138,16 @@ function restoreSession(): RestoredSession {
   return restored;
 }
 
+/**
+ * Ao restaurar, um `claude` volta para a conversa onde estava (`--continue`).
+ * So quando ha conversa salva para o diretorio: sem ela o `--continue` falha.
+ */
+function resumeCommand(command: string, cwd: string): string {
+  if (!isClaudeCommand(command)) return command;
+  const base = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
+  return existsSync(join(base, 'projects', claudeProjectKey(cwd))) ? withContinue(command) : command;
+}
+
 function registerIpc(): void {
   ipcMain.handle(CHANNELS.bootstrap, (): BootstrapState => {
     const config = workspace.current();
@@ -139,6 +158,7 @@ function registerIpc(): void {
       taskLists: tasks.list(),
       texts: texts.list(),
       recentDirs: config.recentDirs,
+      recentCommands: config.recentCommands,
       terminals: terminals.list(),
       terminalRects: Object.fromEntries(terminalRects),
       canvasView: config.canvasView,
@@ -169,6 +189,7 @@ function registerIpc(): void {
   ipcMain.handle(CHANNELS.create, (_event, spec: TerminalSpec) => {
     const snapshot = terminals.create(spec);
     workspace.rememberDir(snapshot.cwd);
+    if (snapshot.command) workspace.rememberCommand(snapshot.command);
     persistTerminals();
     return snapshot;
   });

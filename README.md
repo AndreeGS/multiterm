@@ -60,12 +60,40 @@ npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 | `Ctrl+Shift+L` | Nova lista de tarefas |
 | `Ctrl+Shift+W` | Fechar o painel em foco |
 | `Ctrl+Shift+M` | Maximizar / restaurar o painel em foco |
+| `Ctrl+Shift+P` | Paleta: ir para qualquer painel ou executar qualquer acao |
+| `Alt+1` … `Alt+9` | Ir direto para o painel N (segurar `Alt` mostra os numeros) |
+| `Ctrl+PageDown` / `Ctrl+PageUp` | Painel seguinte / anterior |
+| `Ctrl+Shift+A` | Proximo terminal aguardando voce |
+| `Ctrl+Enter` (numa nota) | Envia a selecao ou a linha do cursor ao terminal vinculado |
 | `Ctrl+,` | Configuracoes (tema e tamanho da fonte) |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copiar / colar (o `Ctrl+C` puro continua sendo SIGINT) |
 | Duplo clique no nome | Renomear |
 
+Os atalhos com `Ctrl+Shift`, `Alt+N` e `Ctrl+PageUp/PageDown` valem mesmo com o
+foco dentro de um terminal, e nao chegam ao shell.
+
+A paleta (`Ctrl+Shift+P`) lista os paineis abertos (os que pedem atencao com
+`●`) e as acoes do app; digitar filtra, sem diferenciar acento nem caixa.
+
 Botoes de cada painel: `■` interromper (Ctrl+C), `⟳` reiniciar o shell,
 `⤢` maximizar, `✕` fechar.
+
+## Comando inicial
+
+O dialogo de novo terminal tem um campo **Comando inicial** (ex.: `claude`,
+`npm run dev`), com sugestoes e os comandos que voce ja usou. O comando e
+digitado no shell assim que ele imprime o prompt, como se voce tivesse
+digitado — com o PATH, aliases e rc de sempre. Ele aparece no cabecalho
+(`~/projeto · claude`) e:
+
+- roda de novo a cada `⟳` (reiniciar);
+- e salvo com a sessao. Ao **restaurar**, um `claude` volta como
+  `claude --continue`, retomando a ultima conversa daquele diretorio — so se
+  existir conversa salva em `~/.claude/projects` (ou `$CLAUDE_CONFIG_DIR`), e
+  so se o comando ja nao escolher uma (`-c`, `--resume`, `-p`...).
+
+O comando inicial nao arma o aviso de ocioso: um agente recem-aberto esperando
+instrucao nao e motivo de alerta.
 
 ## Configuracoes
 
@@ -174,6 +202,43 @@ as notas (maximizar, renomear com duplo clique).
 - Salva sozinho em `tasks.json`. Fechar (`✕`) **apaga** a lista; se ela tiver
   tarefas, o app pede confirmacao.
 
+## Enviar texto aos terminais
+
+Notas e tarefas viram roteiros para os agentes:
+
+- **Nota**: `Ctrl+Enter` envia a selecao — ou, sem selecao, a linha do cursor,
+  descendo para a proxima (da para "executar" um roteiro linha a linha). O
+  botao `▶` no cabecalho faz o mesmo. Texto de varias linhas vai como colagem
+  (bracketed paste), entao chega ao Claude Code como um prompt so.
+- **Tarefa**: o `▶` que aparece passando o mouse manda o texto da tarefa como
+  prompt. Ela ganha a marca `→ terminal` ate ser concluida (so nesta sessao).
+
+### Vinculo com um terminal
+
+Cada nota e cada lista de tarefas tem um `🔗` no cabecalho, que diz para qual
+terminal o texto vai. O vinculo e sempre escolhido por voce:
+
+- **clicar** no `🔗` abre a lista de terminais (e `Remover vinculo`);
+- **arrastar** o `🔗` ate um terminal vincula a ele (o terminal acende ao
+  passar por cima);
+- enviar sem vinculo pergunta o terminal, e a escolha vira o vinculo;
+  `Ctrl+Shift+Enter` na nota, ou `Shift`+clique no `▶`, pergunta de novo e
+  troca o vinculo;
+- a paleta (`Ctrl+Shift+P`) tem `Vincular "<painel>" a um terminal`.
+
+O vinculo e salvo junto com a nota/lista e sobrevive ao reinicio: o terminal
+restaurado volta com o mesmo id. Enquanto a sessao nao e restaurada o `🔗`
+aparece apagado; descartar a sessao ou fechar o terminal (`✕`) desfaz o
+vinculo.
+
+**Na area livre**, uma linha liga o card da nota/lista ao card do terminal,
+de borda a borda (do lado que um mostra para o outro), acompanhando arrasto,
+zoom e pan. Ela muda de cor com o terminal (ambar aguardando, roxo com pedido
+explicito) e some quando os cards se sobrepoem ou uma das pontas esta coberta
+por outro painel. Nas grades nao ha linha — os paineis sao vizinhos
+fixos e ela cruzaria o conteudo; la o nome no `🔗` basta. Da para desligar a
+linha em Configuracoes.
+
 ## Indicador de atividade
 
 O ponto colorido no cabecalho reflete o fluxo de bytes do PTY e o ciclo de vida
@@ -216,6 +281,26 @@ Duas regras evitam aviso falso:
 
 Ambas tem teste de regressao em `src/test/pty-smoke.ts`.
 
+### Pedido explicito do agente
+
+O silencio e um palpite. Quando o proprio processo avisa, o MultiTerm usa o
+aviso dele:
+
+- **BEL** (`\a`) fora de uma sequencia de escape;
+- **notificacoes de terminal** OSC 9 (iTerm2), OSC 777 (Ghostty/urxvt) e
+  OSC 99 (kitty), com a mensagem que vier nelas.
+
+O painel fica roxo, a mensagem toma o lugar do diretorio no cabecalho
+(`🔔 precisa de permissao`) e a notificacao do sistema usa esse texto. Ao
+contrario do aviso de ocioso, ele **nao some quando o agente volta a imprimir**
+(TUIs redesenham a tela depois de avisar): so quando voce olha o terminal ou
+digita nele. O titulo da janela (`OSC 0/2`, terminado em BEL) e a barra de
+progresso (`OSC 9;4`) sao ignorados.
+
+Para o Claude Code mandar esse aviso, escolha o canal de notificacao em
+`/config` (`preferredNotifChannel`): `ghostty` ou `iterm2` mandam a mensagem;
+`terminal_bell` manda so o BEL.
+
 ## Consumo de tokens
 
 A barra superior agrega as transcricoes locais do Claude Code
@@ -240,12 +325,14 @@ Quatro arquivos em `app.getPath('userData')` (`~/.config/MultiTerm/` no Linux),
 todos com escrita atomica, sem banco de dados:
 
 - `config.json`: tamanho/posicao da janela, layout escolhido, proporcoes das
-  divisorias de cada grade, diretorios recentes, terminais abertos (nome,
-  diretorio, shell, posicao), a vista da area livre e as configuracoes de
+  divisorias de cada grade, diretorios e comandos recentes, terminais abertos
+  (nome, diretorio, shell, comando inicial, posicao), a vista da area livre e as configuracoes de
   aparencia;
-- `notes.json`: as notas (titulo, texto e posicao na area livre);
+- `notes.json`: as notas (titulo, texto, posicao na area livre e terminal
+  vinculado);
 - `texts.json`: os textos soltos da area livre (conteudo, posicao, tamanho);
-- `tasks.json`: as listas de tarefas (titulo, itens, posicao na area livre).
+- `tasks.json`: as listas de tarefas (titulo, itens, posicao na area livre e
+  terminal vinculado).
 
 O historico (scrollback) e os processos dos terminais nao sao persistidos.
 
@@ -254,7 +341,8 @@ O historico (scrollback) e os processos dos terminais nao sao persistidos.
 ```text
 src/
   domain/          regras e tipos, sem Electron e sem node-pty
-    terminal/      TerminalSession (ciclo de vida, atividade, replay), porta Pty
+    terminal/      TerminalSession (ciclo de vida, atividade, replay), porta Pty,
+                   comando inicial e deteccao de BEL/OSC de notificacao
     workspace/     layouts (templates, divisorias) e formato do config.json
     notes/         formato e validacao das notas
     canvas/        formato e validacao dos textos soltos
@@ -288,7 +376,6 @@ Regras que mantem o acoplamento baixo:
 
 - Atividade mais precisa lendo o processo em foreground do PTY
   (`IPty.process` no Unix) em vez de so o fluxo de bytes.
-- Comando inicial opcional por terminal (ex.: ja subir `claude` ao criar).
 - Rotear o output por um `Map<id, painel>` em vez de cada painel filtrar todos
   os chunks, e agrupar os `webContents.send` em janelas de ~16ms.
 - Confirmacao ao fechar um terminal com processo em execucao.

@@ -19,6 +19,8 @@ export interface BootstrapState {
   /** Textos soltos da area livre. */
   readonly texts: CanvasText[];
   readonly recentDirs: string[];
+  /** Comandos iniciais usados recentemente, mais recente primeiro. */
+  readonly recentCommands: string[];
   readonly terminals: TerminalSnapshot[];
   /** Posicao de cada terminal na area livre, por id. */
   readonly terminalRects: Record<string, CanvasRect>;

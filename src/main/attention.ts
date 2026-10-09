@@ -16,19 +16,25 @@ const STATUS_TEXT: Partial<Record<TerminalSnapshot['status'], string>> = {
  */
 export class AttentionNotifier {
   private readonly previous = new Map<string, boolean>();
+  private readonly notices = new Map<string, string | null>();
 
   constructor(private readonly getWindow: () => BrowserWindow | null) {}
 
   observe(snapshot: TerminalSnapshot): void {
     const before = this.previous.get(snapshot.id) ?? false;
+    const noticeBefore = this.notices.get(snapshot.id) ?? null;
     this.previous.set(snapshot.id, snapshot.needsAttention);
+    this.notices.set(snapshot.id, snapshot.notice);
 
-    if (snapshot.needsAttention && !before) this.announce(snapshot);
+    // Um pedido explicito novo avisa mesmo se o terminal ja estava ocioso.
+    const newNotice = snapshot.notice !== null && snapshot.notice !== noticeBefore;
+    if ((snapshot.needsAttention && !before) || newNotice) this.announce(snapshot);
     this.refreshBadge();
   }
 
   forget(id: string): void {
     this.previous.delete(id);
+    this.notices.delete(id);
     this.refreshBadge();
   }
 
@@ -39,8 +45,8 @@ export class AttentionNotifier {
     if (Notification.isSupported()) {
       new Notification({
         title: snapshot.name,
-        body: STATUS_TEXT[snapshot.status] ?? 'precisa de atencao',
-        urgency: snapshot.status === 'error' ? 'critical' : 'normal',
+        body: snapshot.notice ?? STATUS_TEXT[snapshot.status] ?? 'precisa de atencao',
+        urgency: snapshot.status === 'error' || snapshot.notice ? 'critical' : 'normal',
       }).show();
     }
     window?.flashFrame(true);

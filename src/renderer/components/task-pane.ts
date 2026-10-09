@@ -2,12 +2,26 @@ import { cleanItemText, type TaskItem, type TaskList } from '../../domain/tasks/
 import type { CanvasRect } from '../../domain/workspace/layout.js';
 import type { MultiTermApi } from '../../shared/contract.js';
 import type { Appearance } from '../theme.js';
-import { beginRename, button, el, type Panel } from './panel.js';
+import {
+  beginRename,
+  button,
+  el,
+  linkChip,
+  renderLinkChip,
+  type LinkCallbacks,
+  type LinkLabel,
+  type Panel,
+} from './panel.js';
 
-export interface TaskCallbacks {
+export interface TaskCallbacks extends LinkCallbacks {
   onFocus(id: string): void;
   onMaximize(id: string): void;
   onClose(id: string): void;
+  /**
+   * Manda texto ao terminal vinculado; `pick` (ou sem vinculo) pergunta qual.
+   * Devolve o nome do terminal que recebeu, ou `null` se nao mandou.
+   */
+  onSend(sourceId: string, text: string, pick: boolean): Promise<string | null>;
 }
 
 /**
@@ -29,6 +43,10 @@ export class TaskPane implements Panel {
   private readonly clearBtn: HTMLButtonElement;
   private readonly maximizeBtn: HTMLButtonElement;
   private list: TaskList;
+  /** Tarefas ja mandadas a um agente nesta sessao (id -> nome do terminal). */
+  private readonly sent = new Map<string, string>();
+  private readonly chip: HTMLButtonElement;
+  private linkName: string | null = null;
   private doneCollapsed = false;
   /** Item sendo arrastado para reordenar. */
   private draggingId: string | null = null;
@@ -64,6 +82,9 @@ export class TaskPane implements Panel {
       }),
     );
 
+    this.chip = linkChip(() => this.id, this.callbacks);
+    renderLinkChip(this.chip, null);
+
     const actions = el('div', 'pane-actions');
     this.clearBtn = button('⌫', 'Apagar as tarefas concluidas', () => this.clearDone());
     this.maximizeBtn = button('⤢', 'Maximizar / restaurar', () => this.callbacks.onMaximize(this.id));
@@ -72,7 +93,7 @@ export class TaskPane implements Panel {
       this.maximizeBtn,
       button('✕', 'Fechar e apagar lista', () => this.callbacks.onClose(this.id)),
     );
-    this.header.append(icon, title, actions);
+    this.header.append(icon, title, this.chip, actions);
 
     this.progress = el('div', 'tasks-progress');
     this.progress.append(el('div', 'tasks-progress-fill'));
@@ -156,6 +177,33 @@ export class TaskPane implements Panel {
 
   dispose(): void {
     this.element.remove();
+  }
+
+  get terminalId(): string | null {
+    return this.list.terminalId;
+  }
+
+  /** Troca o terminal vinculado e persiste. */
+  setLink(terminalId: string | null): void {
+    if (terminalId === this.list.terminalId) return;
+    this.list = { ...this.list, terminalId };
+    this.api.updateTaskList(this.id, { terminalId });
+  }
+
+  /** O App resolve o nome do terminal (ou `null`, sem vinculo). */
+  showLink(label: LinkLabel | null): void {
+    renderLinkChip(this.chip, label);
+    const name = label?.open ? label.name : null;
+    if (name === this.linkName) return;
+    this.linkName = name;
+    this.render();
+  }
+
+  private async send(item: TaskItem, pick: boolean): Promise<void> {
+    const target = await this.callbacks.onSend(this.id, item.text, pick);
+    if (!target) return;
+    this.sent.set(item.id, target);
+    this.render();
   }
 
   private applyFontSize(): void {
@@ -261,7 +309,29 @@ export class TaskPane implements Panel {
       : 'Duplo clique para editar';
     text.addEventListener('dblclick', () => this.beginEdit(row, text, item));
 
-    row.append(check, text, button('✕', 'Apagar tarefa', () => this.remove(item.id)));
+    const target = this.sent.get(item.id);
+    if (target && !item.done) {
+      row.classList.add('sent');
+      const badge = el('span', 'tasks-sent');
+      badge.textContent = `→ ${target}`;
+      badge.title = `Enviada para ${target}`;
+      row.append(check, text, badge);
+    } else {
+      row.append(check, text);
+    }
+    if (!item.done) {
+      const sendBtn = button('▶', '', () => void this.send(item, false));
+      sendBtn.className = 'tasks-send';
+      sendBtn.title = (this.linkName ? `Enviar como prompt para ${this.linkName}` : 'Enviar como prompt (escolher o terminal)') +
+        '\nShift+clique: escolher outro terminal (e vincular a ele)';
+      sendBtn.addEventListener('click', (event) => {
+        if (!event.shiftKey) return;
+        event.stopImmediatePropagation();
+        void this.send(item, true);
+      }, { capture: true });
+      row.append(sendBtn);
+    }
+    row.append(button('✕', 'Apagar tarefa', () => this.remove(item.id)));
     if (sortable) this.makeSortable(row, item.id);
     return row;
   }

@@ -8,6 +8,10 @@
 import { app } from 'electron';
 import { tmpdir } from 'node:os';
 import { TerminalService } from '../application/terminal/terminal-service.js';
+import { withContinue } from '../domain/terminal/command.js';
+import { BELL, SignalScanner } from '../domain/terminal/signals.js';
+import { applyNotePatch, parseNotes } from '../domain/notes/note.js';
+import { parseConfig } from '../domain/workspace/config.js';
 import type { TerminalSnapshot } from '../domain/terminal/types.js';
 import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
 
@@ -128,6 +132,65 @@ async function run(): Promise<void> {
   await waitFor(() => false, 1200);
   const zombies = updates.filter((u) => u.id === created.id).length - updatesAfterClose;
   check(`nao emite update apos fechar (recebidos: ${zombies})`, zombies === 0);
+
+  // 10. comando inicial: digitado quando o shell fica pronto, e de novo no restart
+  output = '';
+  const withCommand = service.create({ name: 'cmd', cwd: tmpdir(), command: 'echo INICIAL_$((40+2))' });
+  check('snapshot traz o comando inicial', withCommand.command === 'echo INICIAL_$((40+2))');
+  check('executa o comando inicial', await waitFor(() => output.includes('INICIAL_42')));
+  await waitFor(() => service.snapshot(withCommand.id)?.status === 'idle');
+  check(
+    'comando inicial nao arma o aviso de ocioso',
+    service.snapshot(withCommand.id)?.needsAttention === false,
+  );
+  output = '';
+  service.restart(withCommand.id);
+  check('repete o comando inicial no restart', await waitFor(() => output.includes('INICIAL_42')));
+
+  // 11. pedido explicito de atencao: OSC 777 com mensagem, e o titulo (OSC 0) nao conta
+  await waitFor(() => service.snapshot(withCommand.id)?.status === 'idle');
+  service.write(withCommand.id, "printf '\\033]0;so um titulo\\007'\n");
+  await waitFor(() => service.snapshot(withCommand.id)?.status === 'idle');
+  check('OSC de titulo nao vira pedido', service.snapshot(withCommand.id)?.notice === null);
+  service.write(withCommand.id, "printf '\\033]777;notify;Claude;precisa de permissao\\007'\n");
+  check(
+    'OSC 777 vira pedido com a mensagem',
+    await waitFor(() => service.snapshot(withCommand.id)?.notice === 'precisa de permissao'),
+  );
+  check('pedido conta como atencao', service.snapshot(withCommand.id)?.needsAttention === true);
+  service.write(withCommand.id, 'echo continua\n');
+  check('digitar limpa o pedido', service.snapshot(withCommand.id)?.notice === null);
+  service.write(withCommand.id, "printf '\\a'\n");
+  check('BEL solto vira pedido', await waitFor(() => service.snapshot(withCommand.id)?.notice === BELL));
+  service.acknowledge(withCommand.id);
+  check('acknowledge limpa o pedido', service.snapshot(withCommand.id)?.notice === null);
+  service.close(withCommand.id);
+
+  // 12. scanner: sequencia cortada entre chunks, progresso OSC 9;4, terminador ST
+  const scanner = new SignalScanner();
+  check('OSC partido entre chunks', scanner.scan('\x1b]9;fe') === null && scanner.scan('ito\x07') === 'feito');
+  check('OSC 9;4 (progresso) ignorado', scanner.scan('\x1b]9;4;1;50\x07') === null);
+  check('OSC terminado em ST', scanner.scan('\x1b]99;i=1;pronto\x1b\\') === 'pronto');
+  check('titulo com BEL nao vira sinal', scanner.scan('\x1b]2;titulo\x07texto') === null);
+
+  // 13. restaurar retoma a conversa do Claude
+  check('claude -> claude --continue', withContinue('claude') === 'claude --continue');
+  check('preserva flags', withContinue('claude --model opus') === 'claude --continue --model opus');
+  check('nao duplica', withContinue('claude -c') === 'claude -c' && withContinue('claude --resume x') === 'claude --resume x');
+  check('ignora outros comandos', withContinue('npm run dev') === 'npm run dev');
+
+  // 14. vinculo nota -> terminal sobrevive ao reinicio: o terminal restaurado reusa o id
+  const reused = service.create({ name: 'restaurado', cwd: tmpdir() }, undefined, 'id-da-sessao-anterior');
+  check('restaurar reusa o id salvo', reused.id === 'id-da-sessao-anterior');
+  const clash = service.create({ name: 'outro', cwd: tmpdir() }, undefined, 'id-da-sessao-anterior');
+  check('id em uso nao e reaproveitado', clash.id !== 'id-da-sessao-anterior');
+  service.close(reused.id);
+  service.close(clash.id);
+  const saved = parseConfig({ terminals: [{ id: 'abc', name: 'x', cwd: '/tmp' }] });
+  check('config guarda o id do terminal', saved.terminals[0]?.id === 'abc');
+  const [note] = parseNotes({ notes: [{ id: 'n', terminalId: 'abc' }] });
+  check('nota guarda o vinculo', note?.terminalId === 'abc');
+  check('patch remove o vinculo', note !== undefined && applyNotePatch(note, { terminalId: null }, 0).terminalId === null);
 }
 
 void app.whenReady().then(async () => {

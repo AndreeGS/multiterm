@@ -27,9 +27,13 @@ export class TerminalService {
     private readonly listeners: TerminalServiceListeners,
   ) {}
 
-  create(spec: TerminalSpec, size?: TerminalSize): TerminalSnapshot {
+  /**
+   * `reuseId` mantem o id de um terminal da sessao anterior, para notas e
+   * listas vinculadas a ele continuarem apontando para o lugar certo.
+   */
+  create(spec: TerminalSpec, size?: TerminalSize, reuseId?: string): TerminalSnapshot {
     const cwd = resolveCwd(spec.cwd);
-    const id = randomUUID();
+    const id = reuseId && !this.sessions.has(reuseId) ? reuseId : randomUUID();
     const session = new TerminalSession(id, { ...spec, cwd }, this.ptys, {
       onData: (sid, chunk) => this.listeners.onData(sid, chunk),
       onUpdate: (snapshot) => this.listeners.onUpdate(snapshot),
