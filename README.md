@@ -225,6 +225,24 @@ Para titulos e anotacoes rapidas no quadro, sem abrir um bloco de notas:
 - os textos ficam sempre por baixo dos paineis, acompanham o zoom e entram no
   `Ajustar`. So aparecem na area livre — nas grades nao ha onde po-los.
 
+#### Grupos
+
+Uma moldura com titulo que junta paineis e textos de um mesmo assunto ("API",
+"Front", "Infra"):
+
+- o botao `▭` na barra de zoom (ou `Novo grupo na area livre` na paleta) cria
+  uma moldura no meio da vista; arraste os paineis para dentro;
+- **arrastar o titulo move o grupo inteiro**: vai junto todo painel e texto
+  com o centro dentro da moldura no momento do arrasto. Pertencer e so isso,
+  nao ha vinculo guardado: tirar um painel do grupo e arrasta-lo para fora;
+- a quina inferior direita redimensiona so a moldura; duplo clique no titulo
+  renomeia; passando o mouse no titulo aparecem a cor (`●`) e o `✕`, que apaga
+  a moldura sem tocar nos paineis;
+- o corpo da moldura deixa o mouse passar: arrastar e dar duplo clique dentro
+  dela funciona como no fundo (move a vista, cria texto);
+- molduras ficam por baixo de textos e paineis, entram no `Ajustar` e sao
+  salvas em `frames.json`. Nas grades nao aparecem.
+
 Ao abrir o app, se havia terminais na sessao anterior, aparece o botao
 **⟲ Restaurar sessao (N)** na barra: ele reabre cada terminal com o mesmo nome,
 diretorio, shell e posicao — mas com um shell novo, os processos nao
@@ -388,7 +406,7 @@ tokens, mas nao custo, e sao listados no tooltip.
 
 ## Persistencia
 
-Quatro arquivos em `app.getPath('userData')` (`~/.config/MultiTerm/` no Linux),
+Cinco arquivos em `app.getPath('userData')` (`~/.config/MultiTerm/` no Linux),
 todos com escrita atomica, sem banco de dados:
 
 - `config.json`: tamanho/posicao da janela, layout escolhido, proporcoes das
@@ -398,6 +416,7 @@ todos com escrita atomica, sem banco de dados:
 - `notes.json`: as notas (titulo, texto, posicao na area livre e terminal
   vinculado);
 - `texts.json`: os textos soltos da area livre (conteudo, posicao, tamanho);
+- `frames.json`: as molduras (grupos) da area livre (titulo, cor, retangulo);
 - `tasks.json`: as listas de tarefas (titulo, itens, posicao na area livre e
   terminal vinculado).
 
@@ -412,19 +431,19 @@ src/
                    comando inicial e deteccao de BEL/OSC de notificacao
     workspace/     layouts (templates, divisorias) e formato do config.json
     notes/         formato e validacao das notas
-    canvas/        formato e validacao dos textos soltos
+    canvas/        textos soltos e molduras (grupos) da area livre
     tasks/         formato e validacao das listas de tarefas
     git/           worktrees: porta Git, caminho, nome de branch, parse do porcelain
   application/     casos de uso (orquestram o dominio)
     terminal/      TerminalService — unico dono do conjunto de sessoes
     workspace/     WorkspaceService — preferencias, com save debounced
     notes/         NotesService — notas, com save debounced
-    canvas/        TextsService — textos soltos, com save debounced
+    canvas/        TextsService e FramesService, com save debounced
     tasks/         TasksService — listas de tarefas, com save debounced
   infrastructure/  adaptadores concretos
     terminal/      NodePtyFactory implementa a porta Pty
     persistence/   JsonConfigStore, JsonNotesStore, JsonTextsStore,
-                   JsonTasksStore (escrita atomica)
+                   JsonTasksStore, JsonFramesStore (escrita atomica)
   main/            processo principal do Electron: janela + IPC + wiring
   renderer/        UI: paineis (terminal, nota, tarefas), grade, area livre, toolbar
   shared/          contrato de IPC tipado, compartilhado pelos tres bundles

@@ -6,6 +6,7 @@ import type { ReplaySnapshot, TerminalSnapshot, TerminalSpec } from '../domain/t
 import type { UsageSummary } from '../domain/usage/types.js';
 import type { Note, NotePatch } from '../domain/notes/note.js';
 import type { CanvasText, CanvasTextPatch } from '../domain/canvas/text.js';
+import type { CanvasFrame, CanvasFramePatch } from '../domain/canvas/frame.js';
 import type { TaskList, TaskListPatch } from '../domain/tasks/task-list.js';
 import type { LayoutSizes, SavedTerminal } from '../domain/workspace/config.js';
 import type { CanvasRect, CanvasView, GridLayoutId, LayoutId, TrackSizes } from '../domain/workspace/layout.js';
@@ -21,6 +22,8 @@ export interface BootstrapState {
   readonly taskLists: TaskList[];
   /** Textos soltos da area livre. */
   readonly texts: CanvasText[];
+  /** Molduras (grupos) da area livre. */
+  readonly frames: CanvasFrame[];
   readonly recentDirs: string[];
   /** Comandos iniciais usados recentemente, mais recente primeiro. */
   readonly recentCommands: string[];
@@ -105,6 +108,12 @@ export interface MultiTermApi {
   updateText(id: string, patch: CanvasTextPatch): void;
   deleteText(id: string): Promise<void>;
 
+  /** Cria uma moldura na area livre, no retangulo do mundo dado. */
+  createFrame(rect: CanvasRect): Promise<CanvasFrame>;
+  /** Fire-and-forget, como os textos. */
+  updateFrame(id: string, patch: CanvasFramePatch): void;
+  deleteFrame(id: string): Promise<void>;
+
   /** Consumo local de tokens (nao e percentual do limite do plano). */
   getUsage(): Promise<UsageSummary>;
   refreshUsage(): void;
@@ -140,6 +149,10 @@ export const CHANNELS = {
   textCreate: 'text:create',
   textUpdate: 'text:update',
   textDelete: 'text:delete',
+
+  frameCreate: 'frame:create',
+  frameUpdate: 'frame:update',
+  frameDelete: 'frame:delete',
 
   gitInfo: 'git:info',
   worktreeDirty: 'git:worktree-dirty',

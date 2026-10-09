@@ -60,6 +60,10 @@ export class App {
       create: (x, y) => this.api.createText(x, y),
       update: (id, patch) => this.api.updateText(id, patch),
       remove: (id) => void this.api.deleteText(id),
+    }, {
+      create: (rect) => this.api.createFrame(rect),
+      update: (id, patch) => this.api.updateFrame(id, patch),
+      remove: (id) => void this.api.deleteFrame(id),
     });
     this.toolbar = new Toolbar({
       onNewTerminal: () => void this.promptNewTerminal(),
@@ -114,6 +118,7 @@ export class App {
     this.grid.setSizes(state.layoutSizes);
     if (state.canvasView) this.canvas.restoreView(state.canvasView);
     this.canvas.setTexts(state.texts);
+    this.canvas.setFrames(state.frames);
     for (const note of state.notes) this.addNote(note);
     for (const list of state.taskLists) this.addTaskList(list);
     for (const snapshot of state.terminals) {
@@ -281,6 +286,9 @@ export class App {
     }
     if (this.pendingTerminals.length > 0) {
       items.push({ label: `Restaurar sessao anterior (${this.pendingTerminals.length})`, run: () => void this.restoreSession() });
+    }
+    if (this.layout === 'free') {
+      items.push({ label: 'Novo grupo na area livre', run: () => void this.canvas.createGroup() });
     }
     for (const layout of LAYOUT_NAMES) {
       items.push({ label: `Layout: ${layout.name}`, run: () => this.setLayout(layout.id) });
