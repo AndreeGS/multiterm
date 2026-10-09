@@ -59,6 +59,18 @@ export class CanvasTextItem {
     };
   }
 
+  /** Posicao no mundo. */
+  get position(): { x: number; y: number } {
+    return { x: this.text.x, y: this.text.y };
+  }
+
+  /** Movido junto com um grupo: so a tela muda; `commit` grava a posicao final. */
+  moveTo(x: number, y: number, commit = false): void {
+    this.text = { ...this.text, x, y };
+    this.place(this.zoom);
+    if (commit) this.callbacks.onChange(this.id, { x, y });
+  }
+
   place(zoom: number): void {
     this.zoom = zoom;
     this.element.style.left = `${this.text.x * zoom}px`;

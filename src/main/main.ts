@@ -7,12 +7,14 @@ import { WorktreeService } from '../application/git/worktree-service.js';
 import { TerminalService } from '../application/terminal/terminal-service.js';
 import { NotesService } from '../application/notes/notes-service.js';
 import { TextsService } from '../application/canvas/texts-service.js';
+import { FramesService } from '../application/canvas/frames-service.js';
 import { TasksService } from '../application/tasks/tasks-service.js';
 import { UsageService } from '../application/usage/usage-service.js';
 import { WorkspaceService } from '../application/workspace/workspace-service.js';
 import { parseWorktreeInfo } from '../domain/git/worktree.js';
 import type { NotePatch } from '../domain/notes/note.js';
 import type { CanvasTextPatch } from '../domain/canvas/text.js';
+import type { CanvasFramePatch } from '../domain/canvas/frame.js';
 import type { TaskListPatch } from '../domain/tasks/task-list.js';
 import { isClaudeCommand, withContinue } from '../domain/terminal/command.js';
 import type { TerminalSpec } from '../domain/terminal/types.js';
@@ -31,6 +33,7 @@ import { parseTemplate } from '../domain/workspace/template.js';
 import { JsonConfigStore } from '../infrastructure/persistence/json-config-store.js';
 import { JsonNotesStore } from '../infrastructure/persistence/json-notes-store.js';
 import { JsonTextsStore } from '../infrastructure/persistence/json-texts-store.js';
+import { JsonFramesStore } from '../infrastructure/persistence/json-frames-store.js';
 import { JsonTasksStore } from '../infrastructure/persistence/json-tasks-store.js';
 import { GitCli } from '../infrastructure/git/git-cli.js';
 import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
@@ -46,6 +49,7 @@ let attention: AttentionNotifier;
 let usage: UsageService;
 let notes: NotesService;
 let texts: TextsService;
+let frames: FramesService;
 let tasks: TasksService;
 const worktrees = new WorktreeService(new GitCli());
 const output = new OutputBatcher((batch) => send(CHANNELS.data, batch));
@@ -175,6 +179,7 @@ function registerIpc(): void {
       notes: notes.list(),
       taskLists: tasks.list(),
       texts: texts.list(),
+      frames: frames.list(),
       recentDirs: config.recentDirs,
       recentCommands: config.recentCommands,
       templates: config.templates,
@@ -307,6 +312,16 @@ function registerIpc(): void {
     if (typeof patch === 'object' && patch !== null) texts.update(id, patch);
   });
   ipcMain.handle(CHANNELS.textDelete, (_event, id: string) => texts.remove(id));
+
+  ipcMain.handle(CHANNELS.frameCreate, (_event, rect: unknown) => {
+    const parsed = parseCanvasRect(rect);
+    if (!parsed) throw new Error('Retangulo invalido.');
+    return frames.create(parsed);
+  });
+  ipcMain.on(CHANNELS.frameUpdate, (_event, id: string, patch: CanvasFramePatch) => {
+    if (typeof patch === 'object' && patch !== null) frames.update(id, patch);
+  });
+  ipcMain.handle(CHANNELS.frameDelete, (_event, id: string) => frames.remove(id));
 }
 
 // Uma unica instancia: abrir de novo apenas foca a janela existente.
@@ -323,6 +338,7 @@ if (!app.requestSingleInstanceLock()) {
     workspace = new WorkspaceService(new JsonConfigStore(app.getPath('userData')));
     notes = new NotesService(new JsonNotesStore(app.getPath('userData')));
     texts = new TextsService(new JsonTextsStore(app.getPath('userData')));
+    frames = new FramesService(new JsonFramesStore(app.getPath('userData')));
     tasks = new TasksService(new JsonTasksStore(app.getPath('userData')));
     attention = new AttentionNotifier(() => mainWindow);
     terminals = new TerminalService(new NodePtyFactory(), {
@@ -364,6 +380,7 @@ if (!app.requestSingleInstanceLock()) {
     workspace?.flush();
     notes?.flush();
     texts?.flush();
+    frames?.flush();
     tasks?.flush();
   });
 }

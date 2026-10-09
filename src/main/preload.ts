@@ -3,6 +3,7 @@ import type { TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js
 import type { UsageSummary } from '../domain/usage/types.js';
 import type { NotePatch } from '../domain/notes/note.js';
 import type { CanvasTextPatch } from '../domain/canvas/text.js';
+import type { CanvasFramePatch } from '../domain/canvas/frame.js';
 import type { TaskListPatch } from '../domain/tasks/task-list.js';
 import type { CanvasRect, CanvasView, GridLayoutId, LayoutId, TrackSizes } from '../domain/workspace/layout.js';
 import type { Settings } from '../domain/workspace/settings.js';
@@ -59,6 +60,10 @@ const api: MultiTermApi = {
   createText: (x: number, y: number) => ipcRenderer.invoke(CHANNELS.textCreate, x, y),
   updateText: (id: string, patch: CanvasTextPatch) => ipcRenderer.send(CHANNELS.textUpdate, id, patch),
   deleteText: (id: string) => ipcRenderer.invoke(CHANNELS.textDelete, id),
+
+  createFrame: (rect: CanvasRect) => ipcRenderer.invoke(CHANNELS.frameCreate, rect),
+  updateFrame: (id: string, patch: CanvasFramePatch) => ipcRenderer.send(CHANNELS.frameUpdate, id, patch),
+  deleteFrame: (id: string) => ipcRenderer.invoke(CHANNELS.frameDelete, id),
 
   getUsage: () => ipcRenderer.invoke(CHANNELS.usageGet) as Promise<UsageSummary>,
   refreshUsage: () => ipcRenderer.send(CHANNELS.usageRefresh),

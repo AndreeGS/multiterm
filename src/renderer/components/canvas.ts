@@ -6,6 +6,8 @@ import {
   type CanvasView,
 } from '../../domain/workspace/layout.js';
 import type { CanvasText, CanvasTextPatch } from '../../domain/canvas/text.js';
+import { membersOf, type CanvasFrame, type CanvasFramePatch } from '../../domain/canvas/frame.js';
+import { CanvasFrameItem } from './canvas-frame.js';
 import { CanvasTextItem } from './canvas-text.js';
 import { button, drag, el, type Board, type Panel } from './panel.js';
 
@@ -16,7 +18,15 @@ export interface TextStore {
   remove(id: string): void;
 }
 
+/** Onde a area livre guarda as molduras (grupos). */
+export interface FrameStore {
+  create(rect: CanvasRect): Promise<CanvasFrame>;
+  update(id: string, patch: CanvasFramePatch): void;
+  remove(id: string): void;
+}
+
 const DEFAULT_SIZE = { width: 640, height: 400 };
+const DEFAULT_FRAME = { width: 900, height: 560 };
 const MIN_SIZE = { width: 280, height: 160 };
 const CASCADE = 32;
 const DOT_SPACING = 24;
@@ -31,8 +41,8 @@ const ZOOM_STEP = 1.2;
  * com as celulas do xterm e borra o texto), posicao e tamanho sao
  * multiplicados pelo zoom e cada painel ajusta a propria fonte.
  *
- * Alem dos paineis, o fundo aceita textos soltos (duplo clique), que ficam
- * sempre por baixo dos paineis.
+ * Alem dos paineis, o fundo aceita textos soltos (duplo clique) e molduras
+ * que agrupam paineis e textos; os dois ficam sempre por baixo dos paineis.
  */
 export class CanvasBoard implements Board {
   readonly element = el('div', 'canvas');
@@ -43,6 +53,9 @@ export class CanvasBoard implements Board {
   private readonly texts = new Map<string, CanvasTextItem>();
   /** Camada dos textos: antes dos paineis no DOM, entao fica por baixo. */
   private readonly textLayer = el('div', 'canvas-texts');
+  private readonly frames = new Map<string, CanvasFrameItem>();
+  /** Molduras: antes ate dos textos, para um titulo nunca cobrir um texto. */
+  private readonly frameLayer = el('div', 'canvas-frames');
   private panes: Panel[] = [];
   private view: CanvasView = { x: 0, y: 0, zoom: 1 };
   /** Frame agendado para aplicar o zoom aos paineis (0 = nenhum). */
@@ -55,17 +68,19 @@ export class CanvasBoard implements Board {
   constructor(
     private readonly onViewChange: (view: CanvasView) => void,
     private readonly textStore: TextStore,
+    private readonly frameStore: FrameStore,
   ) {
     this.zoomLabel = button('100%', 'Voltar para 100%', () => this.zoomBy(1 / this.view.zoom));
     this.zoomLabel.className = 'zoom-label';
     this.zoomBar.append(
       button('T', 'Novo texto solto (ou duplo clique no fundo)', () => void this.createTextAtCenter()),
+      button('▭', 'Novo grupo: uma moldura que leva junto o que estiver dentro', () => void this.createGroup()),
       button('−', 'Diminuir zoom (Ctrl+roda do mouse)', () => this.zoomBy(1 / ZOOM_STEP)),
       this.zoomLabel,
       button('+', 'Aumentar zoom (Ctrl+roda do mouse)', () => this.zoomBy(ZOOM_STEP)),
       button('Ajustar', 'Enquadrar todos os paineis', () => this.fitAll()),
     );
-    this.world.append(this.textLayer);
+    this.world.append(this.frameLayer, this.textLayer);
     this.element.append(this.world, this.zoomBar);
     this.element.title =
       'Arraste o fundo para mover a vista · Ctrl+roda para zoom · duplo clique escreve um texto';
@@ -106,6 +121,25 @@ export class CanvasBoard implements Board {
   /** Textos salvos da sessao anterior. */
   setTexts(texts: CanvasText[]): void {
     for (const text of texts) this.addText(text);
+  }
+
+  /** Molduras salvas da sessao anterior. */
+  setFrames(frames: CanvasFrame[]): void {
+    for (const frame of frames) this.addFrame(frame);
+  }
+
+  /** Moldura nova no meio da vista, para arrastar os paineis para dentro. */
+  async createGroup(): Promise<void> {
+    const { x, y, zoom } = this.view;
+    const width = Math.min(DEFAULT_FRAME.width, Math.max(240, this.element.clientWidth / zoom - 120));
+    const height = Math.min(DEFAULT_FRAME.height, Math.max(160, this.element.clientHeight / zoom - 120));
+    const frame = await this.frameStore.create({
+      x: (this.element.clientWidth / 2 - x) / zoom - width / 2,
+      y: (this.element.clientHeight / 2 - y) / zoom - height / 2,
+      width,
+      height,
+    });
+    this.addFrame(frame);
   }
 
   get currentPage(): number {
@@ -163,7 +197,53 @@ export class CanvasBoard implements Board {
   }
 
   private isBackground(target: EventTarget | null): boolean {
-    return target === this.element || target === this.world || target === this.textLayer;
+    return target === this.element || target === this.world || target === this.textLayer || target === this.frameLayer;
+  }
+
+  private addFrame(frame: CanvasFrame): CanvasFrameItem {
+    const item = new CanvasFrameItem(frame, {
+      onChange: (id, patch) => this.frameStore.update(id, patch),
+      onRemove: (id) => this.removeFrame(id),
+      onMoveStart: (moving, event) => this.moveGroup(moving, event),
+    });
+    this.frames.set(frame.id, item);
+    this.frameLayer.append(item.element);
+    item.place(this.view.zoom);
+    return item;
+  }
+
+  private removeFrame(id: string): void {
+    const item = this.frames.get(id);
+    if (!item) return;
+    this.frames.delete(id);
+    item.dispose();
+    this.frameStore.remove(id);
+  }
+
+  /**
+   * Arrasta a moldura e, junto, os paineis e textos com o centro dentro dela
+   * no comeco do arrasto. A tela acompanha o mouse; cada um grava a posicao
+   * final so ao soltar, como num arrasto normal.
+   */
+  private moveGroup(frame: CanvasFrameItem, event: MouseEvent): void {
+    const origin = frame.rect;
+    const panes = membersOf(origin, this.panes
+      .filter((pane) => pane.canvasRect && pane.id !== this.maximizedId)
+      .map((pane) => ({ pane, rect: pane.canvasRect! })));
+    const texts = membersOf(origin, [...this.texts.values()].map((item) => ({ item, rect: item.worldRect, start: item.position })));
+    const { zoom } = this.view;
+    let delta = { x: 0, y: 0 };
+    drag(event, 'grabbing', (dx, dy) => {
+      delta = { x: dx / zoom, y: dy / zoom };
+      frame.moveTo(origin.x + delta.x, origin.y + delta.y);
+      for (const { pane, rect } of panes) this.place(pane, { ...rect, x: rect.x + delta.x, y: rect.y + delta.y });
+      for (const { item, start } of texts) item.moveTo(start.x + delta.x, start.y + delta.y);
+    }, () => {
+      if (delta.x === 0 && delta.y === 0) return;
+      frame.moveTo(origin.x + delta.x, origin.y + delta.y, true);
+      for (const { pane, rect } of panes) pane.canvasRect = { ...rect, x: rect.x + delta.x, y: rect.y + delta.y };
+      for (const { item, start } of texts) item.moveTo(start.x + delta.x, start.y + delta.y, true);
+    });
   }
 
   private async createText(x: number, y: number): Promise<void> {
@@ -235,6 +315,7 @@ export class CanvasBoard implements Board {
   private fitAll(): void {
     const rects = this.panes.map((pane) => pane.canvasRect).filter((r): r is CanvasRect => r !== null);
     for (const item of this.texts.values()) rects.push(item.worldRect);
+    for (const item of this.frames.values()) rects.push(item.rect);
     this.setView(fitView(rects, this.element.clientWidth, this.element.clientHeight));
   }
 
@@ -304,6 +385,7 @@ export class CanvasBoard implements Board {
   private render(): void {
     this.zoomBar.hidden = this.maximizedId !== null;
     for (const item of this.texts.values()) item.place(this.view.zoom);
+    for (const item of this.frames.values()) item.place(this.view.zoom);
     for (const pane of this.panes) {
       const maximized = pane.id === this.maximizedId;
       const hidden = this.maximizedId !== null && !maximized;
