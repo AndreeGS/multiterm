@@ -2,6 +2,7 @@ import type { Note } from '../domain/notes/note.js';
 import type { TaskList } from '../domain/tasks/task-list.js';
 import type { TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js';
 import type { TerminalTemplate } from '../domain/workspace/template.js';
+import type { UsageSummary, UsageTotals } from '../domain/usage/types.js';
 import { capacity, isGridLayout, layoutFor, type CanvasRect, type LayoutId } from '../domain/workspace/layout.js';
 import type { SavedTerminal } from '../domain/workspace/config.js';
 import { defaultSettings, type Settings } from '../domain/workspace/settings.js';
@@ -37,6 +38,8 @@ export class App {
   private recentDirs: string[] = [];
   private recentCommands: string[] = [];
   private templates: TerminalTemplate[] = [];
+  /** Consumo por conversa do Claude, do ultimo resumo de uso. */
+  private usageBySession: Record<string, UsageTotals> = {};
   /** Terminais da sessao anterior ainda nao restaurados (vinculos podem apontar para eles). */
   private pendingTerminals: SavedTerminal[] = [];
   private readonly links: LinkLayer;
@@ -117,6 +120,7 @@ export class App {
       this.trackAttention(snapshot);
     }
     this.setPendingSession(state.pendingSession);
+    void this.api.getUsage().then((summary) => this.applyUsageSummary(summary));
     // Vinculo para um terminal que nao existe mais (nem aberto, nem na sessao
     // anterior) nao tem como voltar: solta.
     for (const source of this.linkSources()) {
@@ -171,6 +175,7 @@ export class App {
       if (renamed) this.refreshLinks();
     });
     this.api.onTerminalClose((id) => this.removePane(id));
+    this.api.onUsageUpdate((summary) => this.applyUsageSummary(summary));
 
     // Voltar para a janela ja conta como "vi o terminal em foco".
     window.addEventListener('focus', () => {
@@ -646,7 +651,19 @@ export class App {
   }
 
   private addTerminal(snapshot: TerminalSnapshot, rect: CanvasRect | null = null): void {
-    this.addPane(new TerminalPane(snapshot, this.api, this.paneCallbacks(), this.settings, rect));
+    const pane = new TerminalPane(snapshot, this.api, this.paneCallbacks(), this.settings, rect);
+    this.addPane(pane);
+    this.applyUsage(pane);
+  }
+
+  private applyUsageSummary(summary: UsageSummary): void {
+    this.usageBySession = summary.bySession;
+    for (const pane of this.terminalPanes()) this.applyUsage(pane);
+  }
+
+  private applyUsage(pane: TerminalPane): void {
+    const session = pane.info.claudeSession;
+    pane.setUsage((session && this.usageBySession[session]) || null);
   }
 
   private addNote(note: Note): void {
@@ -768,7 +785,9 @@ function paneLabel(pane: Panel): string {
 function paneDetail(pane: Panel): string {
   if (pane instanceof TerminalPane) {
     const { cwd, command, notice } = pane.info;
-    return notice ? `🔔 ${notice}` : `terminal · ${shortenPath(cwd)}${command ? ` · ${command}` : ''}`;
+    if (notice) return `🔔 ${notice}`;
+    const usage = pane.usageText;
+    return `terminal · ${shortenPath(cwd)}${command ? ` · ${command}` : ''}${usage ? ` · ${usage}` : ''}`;
   }
   if (pane instanceof NotePane) return 'nota';
   if (pane instanceof TaskPane) return 'tarefas';

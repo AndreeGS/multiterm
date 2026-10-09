@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
+import { cleanCommand, wantsOwnSession } from '../../domain/terminal/command.js';
 import type { PtyFactory } from '../../domain/terminal/pty.js';
 import type { PaneColor } from '../../domain/workspace/colors.js';
-import { TerminalSession } from '../../domain/terminal/session.js';
+import { TerminalSession, type TranscriptCheck } from '../../domain/terminal/session.js';
 import type { ReplaySnapshot, TerminalSize, TerminalSnapshot, TerminalSpec } from '../../domain/terminal/types.js';
 
 export interface TerminalServiceListeners {
@@ -26,6 +27,7 @@ export class TerminalService {
   constructor(
     private readonly ptys: PtyFactory,
     private readonly listeners: TerminalServiceListeners,
+    private readonly hasTranscript: TranscriptCheck = () => false,
   ) {}
 
   /**
@@ -35,10 +37,14 @@ export class TerminalService {
   create(spec: TerminalSpec, size?: TerminalSize, reuseId?: string): TerminalSnapshot {
     const cwd = resolveCwd(spec.cwd);
     const id = reuseId && !this.sessions.has(reuseId) ? reuseId : randomUUID();
-    const session = new TerminalSession(id, { ...spec, cwd }, this.ptys, {
+    // Cada `claude` ganha uma conversa propria; restaurar traz a mesma de volta.
+    const claudeSession = wantsOwnSession(cleanCommand(spec.command))
+      ? (spec.claudeSession ?? randomUUID())
+      : null;
+    const session = new TerminalSession(id, { ...spec, cwd, claudeSession }, this.ptys, {
       onData: (sid, chunk, seq) => this.listeners.onData(sid, chunk, seq),
       onUpdate: (snapshot) => this.listeners.onUpdate(snapshot),
-    });
+    }, this.hasTranscript);
     this.sessions.set(id, session);
     session.start(size);
     return session.snapshot();

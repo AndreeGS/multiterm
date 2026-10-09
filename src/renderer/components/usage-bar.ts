@@ -70,13 +70,13 @@ function describe({ model, totals }: ModelBreakdown): string {
   return `  ${model}: ${money(totals.costUsd)}  (${parts.join(', ')})`;
 }
 
-function formatTokens(value: number): string {
+export function formatTokens(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace('.', ',')}M`;
   if (value >= 1_000) return `${Math.round(value / 1_000)}k`;
   return `${value}`;
 }
 
-function money(value: number): string {
+export function money(value: number): string {
   return `US$ ${value.toFixed(2).replace('.', ',')}`;
 }
 

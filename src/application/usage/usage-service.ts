@@ -6,11 +6,8 @@ import {
   type UsageSummary,
   type UsageTotals,
 } from '../../domain/usage/types.js';
-import {
-  ClaudeTranscriptReader,
-  dayKeyFromDate,
-  type DailyUsage,
-} from '../../infrastructure/usage/claude-transcript-reader.js';
+import { dayKeyFromDate } from '../../domain/usage/transcript.js';
+import { ClaudeTranscriptReader, type DailyUsage } from '../../infrastructure/usage/claude-transcript-reader.js';
 
 const REFRESH_INTERVAL_MS = 60_000;
 const WEEK_DAYS = 7;
@@ -54,7 +51,7 @@ export class UsageService {
         this.summary = emptySummary(false);
       } else {
         const daily = await this.reader.refresh();
-        this.summary = summarize(daily, this.reader.unpricedModels);
+        this.summary = summarize(daily, this.reader.unpricedModels, this.reader.bySession);
       }
       this.onUpdate(this.summary);
     } catch (error) {
@@ -66,7 +63,11 @@ export class UsageService {
   }
 }
 
-function summarize(daily: DailyUsage, unpricedModels: string[]): UsageSummary {
+function summarize(
+  daily: DailyUsage,
+  unpricedModels: string[],
+  bySession: ReadonlyMap<string, UsageTotals>,
+): UsageSummary {
   const today = dayKeyFromDate(new Date());
   const weekDays = new Set<string>();
   for (let i = 0; i < WEEK_DAYS; i += 1) {
@@ -90,6 +91,7 @@ function summarize(daily: DailyUsage, unpricedModels: string[]): UsageSummary {
     todayByModel: rank(todayByModel),
     weekByModel: rank(weekByModel),
     unpricedModels,
+    bySession: Object.fromEntries([...bySession].map(([id, totals]) => [id, { ...totals }])),
     updatedAt: Date.now(),
     available: true,
   };

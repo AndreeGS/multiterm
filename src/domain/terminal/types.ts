@@ -23,6 +23,12 @@ export interface TerminalSpec {
   readonly command?: string;
   /** Cor de destaque no cabecalho. Ausente = sem cor. */
   readonly color?: PaneColor | null;
+  /**
+   * Conversa do Claude Code deste terminal (UUID). Com ele, o `claude` do
+   * comando inicial abre/retoma sempre a mesma conversa, e o consumo de
+   * tokens pode ser atribuido ao terminal.
+   */
+  readonly claudeSession?: string | null;
 }
 
 /** Projecao serializavel de uma sessao, enviada ao renderer. */
@@ -34,6 +40,8 @@ export interface TerminalSnapshot {
   /** Comando inicial, repetido a cada restart. `null` = so o shell. */
   readonly command: string | null;
   readonly color: PaneColor | null;
+  /** Conversa do Claude Code acompanhada neste terminal; `null` = nenhuma. */
+  readonly claudeSession: string | null;
   readonly status: TerminalStatus;
   readonly exitCode: number | null;
   readonly createdAt: number;

@@ -1,4 +1,4 @@
-import { cleanCommand } from '../terminal/command.js';
+import { cleanCommand, parseSessionId } from '../terminal/command.js';
 import {
   DEFAULT_LAYOUT,
   GRID_LAYOUTS,
@@ -37,6 +37,8 @@ export interface SavedTerminal {
   command?: string;
   /** Cor de destaque; ausente = sem cor. */
   color?: PaneColor;
+  /** Conversa do Claude Code do terminal: restaurar retoma exatamente ela. */
+  claudeSession?: string;
   rect: CanvasRect | null;
 }
 
@@ -143,6 +145,8 @@ function parseSavedTerminal(raw: unknown): SavedTerminal | null {
   if (command) saved.command = command;
   const color = parsePaneColor(input.color);
   if (color) saved.color = color;
+  const claudeSession = parseSessionId(input.claudeSession);
+  if (claudeSession) saved.claudeSession = claudeSession;
   return saved;
 }
 

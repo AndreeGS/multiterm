@@ -2,6 +2,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
 import type { TerminalSnapshot } from '../../domain/terminal/types.js';
+import { totalTokens, type UsageTotals } from '../../domain/usage/types.js';
 import type { CanvasRect } from '../../domain/workspace/layout.js';
 import type { MultiTermApi } from '../../shared/contract.js';
 import { shortenPath } from '../paths.js';
@@ -9,6 +10,7 @@ import { matchShortcut } from '../shortcuts.js';
 import { MIN_CONTRAST, TERMINAL_THEMES, type Appearance } from '../theme.js';
 import { openColorMenu, paneColorVar } from './color-menu.js';
 import { beginRename, button, el, type Panel } from './panel.js';
+import { formatTokens, money } from './usage-bar.js';
 
 const STATUS_LABEL: Record<TerminalSnapshot['status'], string> = {
   starting: 'iniciando',
@@ -40,6 +42,8 @@ export class TerminalPane implements Panel {
   private readonly cwdEl: HTMLElement;
   private readonly maximizeBtn: HTMLButtonElement;
   private readonly colorBtn: HTMLButtonElement;
+  private readonly usageEl: HTMLElement;
+  private usage: UsageTotals | null = null;
   private readonly observer: ResizeObserver;
   private snapshot: TerminalSnapshot;
   /**
@@ -95,7 +99,10 @@ export class TerminalPane implements Panel {
       button('✕', 'Fechar terminal', () => this.callbacks.onClose(this.id)),
     );
 
-    header.append(this.dot, title, actions);
+    this.usageEl = el('span', 'pane-usage');
+    this.usageEl.hidden = true;
+
+    header.append(this.dot, title, this.usageEl, actions);
 
     const body = el('div', 'pane-body');
     this.element.append(header, body);
@@ -237,6 +244,27 @@ export class TerminalPane implements Panel {
       this.lastSize = { cols, rows };
       this.api.resizeTerminal(this.id, cols, rows);
     }
+  }
+
+  /**
+   * Consumo da conversa do Claude deste terminal (`null` = sem conversa ou
+   * nada gravado ainda). Vem do resumo de uso, atualizado a cada minuto.
+   */
+  setUsage(usage: UsageTotals | null): void {
+    this.usage = usage;
+    this.usageEl.hidden = usage === null;
+    if (!usage) return;
+    this.usageEl.textContent = this.usageText ?? '';
+    this.usageEl.title =
+      `Conversa do Claude neste terminal (${usage.requests} respostas)\n` +
+      `entrada ${formatTokens(usage.inputTokens)} · saida ${formatTokens(usage.outputTokens)}\n` +
+      `cache: escrita ${formatTokens(usage.cacheWriteTokens)} · leitura ${formatTokens(usage.cacheReadTokens)}\n` +
+      'Custo estimado pela tabela publica da API.';
+  }
+
+  /** `48k · US$ 0,62`, ou `null` sem consumo. */
+  get usageText(): string | null {
+    return this.usage ? `${formatTokens(totalTokens(this.usage))} · ${money(this.usage.costUsd)}` : null;
   }
 
   /** Abre o menu de cores sob o botao ● do cabecalho. */

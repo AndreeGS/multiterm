@@ -1,6 +1,6 @@
 import { basename } from 'node:path';
 import { parsePaneColor, type PaneColor } from '../workspace/colors.js';
-import { cleanCommand } from './command.js';
+import { claudeLaunchCommand, cleanCommand, parseSessionId, sessionIdOf, wantsOwnSession } from './command.js';
 import type { Pty, PtyFactory } from './pty.js';
 import { SignalScanner } from './signals.js';
 import type { ReplaySnapshot, TerminalSize, TerminalSnapshot, TerminalSpec, TerminalStatus } from './types.js';
@@ -10,6 +10,9 @@ export interface SessionEvents {
   onData(id: string, chunk: string, seq: number): void;
   onUpdate(snapshot: TerminalSnapshot): void;
 }
+
+/** Porta: a conversa do Claude com este id ja foi gravada em disco? */
+export type TranscriptCheck = (sessionId: string) => boolean;
 
 const DEFAULT_SIZE: TerminalSize = { cols: 80, rows: 24 };
 /** Silencio apos o qual um terminal "running" passa a "idle". */
@@ -30,6 +33,9 @@ export class TerminalSession {
   private shell: string;
   private command: string;
   private color: PaneColor | null;
+  private readonly claudeSession: string | null;
+  /** O que de fato e digitado no shell (o comando com a conversa escolhida). */
+  private launch = '';
   private status: TerminalStatus = 'starting';
   private exitCode: number | null = null;
   private size: TerminalSize = DEFAULT_SIZE;
@@ -55,12 +61,18 @@ export class TerminalSession {
     spec: TerminalSpec,
     private readonly ptys: PtyFactory,
     private readonly events: SessionEvents,
+    private readonly hasTranscript: TranscriptCheck = () => false,
   ) {
     this.id = id;
     this.cwd = spec.cwd;
     this.shell = spec.shell?.trim() || ptys.defaultShell();
     this.command = cleanCommand(spec.command);
     this.color = parsePaneColor(spec.color);
+    // Um `claude` puro ganha a conversa que o servico escolheu; um que ja
+    // escolhe a sua por id (`--resume X`) so e acompanhado.
+    this.claudeSession = wantsOwnSession(this.command)
+      ? parseSessionId(spec.claudeSession)
+      : sessionIdOf(this.command);
     this.name = spec.name.trim() || basename(spec.cwd) || 'terminal';
   }
 
@@ -72,6 +84,7 @@ export class TerminalSession {
       shell: this.shell,
       command: this.command || null,
       color: this.color,
+      claudeSession: this.claudeSession,
       status: this.status,
       exitCode: this.exitCode,
       createdAt: this.createdAt,
@@ -95,7 +108,8 @@ export class TerminalSession {
 
     this.exitCode = null;
     this.scanner = new SignalScanner();
-    this.commandPending = this.command.length > 0;
+    this.launch = this.launchCommand();
+    this.commandPending = this.launch.length > 0;
     this.setStatus('starting');
 
     try {
@@ -123,7 +137,7 @@ export class TerminalSession {
         // como se voce tivesse digitado. Nao arma o aviso de ocioso — um
         // agente recem-aberto esperando instrucao nao e novidade para ninguem.
         this.commandPending = false;
-        this.pty?.write(`${this.command}\r`);
+        this.pty?.write(`${this.launch}\r`);
       }
     });
 
@@ -211,6 +225,12 @@ export class TerminalSession {
     } catch {
       // processo ja morreu
     }
+  }
+
+  /** Decidido a cada start: depois que a conversa existe, reiniciar a retoma. */
+  private launchCommand(): string {
+    if (!this.claudeSession || !wantsOwnSession(this.command)) return this.command;
+    return claudeLaunchCommand(this.command, this.claudeSession, this.hasTranscript(this.claudeSession));
   }
 
   private markActive(): void {

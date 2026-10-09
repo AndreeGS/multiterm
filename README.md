@@ -88,10 +88,16 @@ digitado — com o PATH, aliases e rc de sempre. Ele aparece no cabecalho
 (`~/projeto · claude`) e:
 
 - roda de novo a cada `⟳` (reiniciar);
-- e salvo com a sessao. Ao **restaurar**, um `claude` volta como
-  `claude --continue`, retomando a ultima conversa daquele diretorio — so se
-  existir conversa salva em `~/.claude/projects` (ou `$CLAUDE_CONFIG_DIR`), e
-  so se o comando ja nao escolher uma (`-c`, `--resume`, `-p`...).
+- e salvo com a sessao.
+
+Cada terminal com `claude` tem **a sua conversa**. O app escolhe um id para
+ela e digita `claude --session-id <id>` na primeira vez. Ao reiniciar (`⟳`)
+ou restaurar a sessao, digita `claude --resume <id>`, voltando exatamente
+para a conversa daquele terminal, mesmo com varios no mesmo diretorio. No
+cabecalho continua aparecendo so `claude`. Comandos que ja escolhem a conversa
+(`-c`, `--resume`, `-p`...) ficam como voce escreveu. Terminais salvos por
+versoes anteriores, sem id, voltam como `claude --continue`, e so se existir
+conversa salva para o diretorio em `~/.claude/projects` (ou `$CLAUDE_CONFIG_DIR`).
 
 O comando inicial nao arma o aviso de ocioso: um agente recem-aberto esperando
 instrucao nao e motivo de alerta.
@@ -337,8 +343,15 @@ A barra superior agrega as transcricoes locais do Claude Code
 custo estimado de hoje e dos ultimos 7 dias. O tooltip abre o detalhe por
 modelo; clicar atualiza na hora (tambem atualiza sozinho a cada minuto).
 
+**Por terminal**: o cabecalho de cada terminal com `claude` mostra o consumo
+da conversa dele (`90k · US$ 0,18`, com o detalhe no tooltip), e a paleta
+repete o numero. Conta a conversa inteira, inclusive subagentes. Limitacao:
+`/clear` ou `/resume` dentro do Claude troca de conversa, e dali em diante o
+numero do terminal para de acompanhar.
+
 Leitura incremental — cada arquivo e lido so a partir de onde parou, em
-streaming, e arquivos sem escrita recente sao ignorados. Na pratica: ~150ms na
+streaming, e arquivos sem escrita recente sao ignorados. Uma linha que ainda
+esta sendo escrita fica para a proxima passada. Na pratica: ~150ms na
 primeira passada e ~4ms nas seguintes, sem travar a interface.
 
 **Isto e consumo, nao percentual do limite do plano.** O quanto do limite
