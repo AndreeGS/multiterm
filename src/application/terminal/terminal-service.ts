@@ -4,11 +4,11 @@ import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
 import type { PtyFactory } from '../../domain/terminal/pty.js';
 import { TerminalSession } from '../../domain/terminal/session.js';
-import type { TerminalSize, TerminalSnapshot, TerminalSpec } from '../../domain/terminal/types.js';
+import type { ReplaySnapshot, TerminalSize, TerminalSnapshot, TerminalSpec } from '../../domain/terminal/types.js';
 
 export interface TerminalServiceListeners {
-  /** Bytes crus do pty, destinados ao xterm. */
-  onData(id: string, chunk: string): void;
+  /** Bytes crus do pty, destinados ao xterm. `seq` numera os chunks da sessao. */
+  onData(id: string, chunk: string, seq: number): void;
   /** Metadados da sessao mudaram (status, nome, cwd). */
   onUpdate(snapshot: TerminalSnapshot): void;
   /** Sessao removida do workspace. */
@@ -35,7 +35,7 @@ export class TerminalService {
     const cwd = resolveCwd(spec.cwd);
     const id = reuseId && !this.sessions.has(reuseId) ? reuseId : randomUUID();
     const session = new TerminalSession(id, { ...spec, cwd }, this.ptys, {
-      onData: (sid, chunk) => this.listeners.onData(sid, chunk),
+      onData: (sid, chunk, seq) => this.listeners.onData(sid, chunk, seq),
       onUpdate: (snapshot) => this.listeners.onUpdate(snapshot),
     });
     this.sessions.set(id, session);
@@ -52,8 +52,8 @@ export class TerminalService {
   }
 
   /** Output recente, para a UI reconstruir a tela ao (re)anexar. */
-  replay(id: string): string {
-    return this.sessions.get(id)?.replayBuffer() ?? '';
+  replay(id: string): ReplaySnapshot {
+    return this.sessions.get(id)?.replayBuffer() ?? { data: '', seq: 0 };
   }
 
   write(id: string, data: string): void {

@@ -372,6 +372,11 @@ Regras que mantem o acoplamento baixo:
 - Testes unitarios ficam em `src/test/unit/*.test.ts`. O `npm test` empacota
   cada arquivo com esbuild (os imports `.js` apontam para `.ts`, o que o Node
   sozinho nao resolve) e roda com `node --test`.
+- O output dos ptys cruza o IPC em lotes de ~16ms (`main/output-batcher.ts`),
+  com uma entrada por terminal, e o `App` entrega cada uma ao painel pelo id.
+  Cada chunk tem um `seq`; o replay diz ate qual `seq` ja trouxe, e o painel
+  descarta o que chegou ao vivo e ja estava nele (nada aparece duplicado ao
+  reabrir um painel).
 - O renderer nao tem acesso a Node: `contextIsolation` ligado e uma API unica
   exposta pelo `preload`, tipada em `shared/contract.ts`.
 - Nada e executado automaticamente. O app so sobe o shell que voce pediu, no
@@ -381,7 +386,5 @@ Regras que mantem o acoplamento baixo:
 
 - Atividade mais precisa lendo o processo em foreground do PTY
   (`IPty.process` no Unix) em vez de so o fluxo de bytes.
-- Rotear o output por um `Map<id, painel>` em vez de cada painel filtrar todos
-  os chunks, e agrupar os `webContents.send` em janelas de ~16ms.
 - Confirmacao ao fechar um terminal com processo em execucao.
 - Busca no scrollback (`@xterm/addon-search`).

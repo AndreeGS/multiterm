@@ -6,7 +6,7 @@ import type { CanvasTextPatch } from '../domain/canvas/text.js';
 import type { TaskListPatch } from '../domain/tasks/task-list.js';
 import type { CanvasRect, CanvasView, GridLayoutId, LayoutId, TrackSizes } from '../domain/workspace/layout.js';
 import type { Settings } from '../domain/workspace/settings.js';
-import { CHANNELS, type BootstrapState, type MultiTermApi } from '../shared/contract.js';
+import { CHANNELS, type BootstrapState, type MultiTermApi, type TerminalOutput } from '../shared/contract.js';
 
 /** Inscreve um canal e devolve a funcao de cancelamento. */
 function subscribe<T extends unknown[]>(
@@ -56,7 +56,7 @@ const api: MultiTermApi = {
   getUsage: () => ipcRenderer.invoke(CHANNELS.usageGet) as Promise<UsageSummary>,
   refreshUsage: () => ipcRenderer.send(CHANNELS.usageRefresh),
 
-  onTerminalData: (listener) => subscribe<[string, string]>(CHANNELS.data, listener),
+  onTerminalData: (listener) => subscribe<[TerminalOutput[]]>(CHANNELS.data, listener),
   onTerminalUpdate: (listener) => subscribe<[TerminalSnapshot]>(CHANNELS.update, listener),
   onTerminalClose: (listener) => subscribe<[string]>(CHANNELS.closed, listener),
   onUsageUpdate: (listener) => subscribe<[UsageSummary]>(CHANNELS.usageUpdate, listener),

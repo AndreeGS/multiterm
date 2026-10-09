@@ -45,6 +45,15 @@ export interface TerminalSnapshot {
   readonly notice: string | null;
 }
 
+/**
+ * Output retido de uma sessao. `seq` e o numero do ultimo chunk incluido: a UI
+ * descarta os chunks ao vivo com `seq` menor ou igual, que ja vieram aqui.
+ */
+export interface ReplaySnapshot {
+  readonly data: string;
+  readonly seq: number;
+}
+
 export interface TerminalSize {
   readonly cols: number;
   readonly rows: number;

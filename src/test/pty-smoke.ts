@@ -99,7 +99,7 @@ async function run(): Promise<void> {
   check('restart preserva identidade', service.snapshot(created.id)?.name === 'smoke');
 
   // 6. buffer de replay alimenta a UI ao reanexar
-  check('mantem buffer de replay', service.replay(created.id).includes('AFTER_RESTART'));
+  check('mantem buffer de replay', service.replay(created.id).data.includes('AFTER_RESTART'));
 
   // 8. rename e close
   // 7. sinal de atencao: sobe quando o terminal para, some quando voce olha

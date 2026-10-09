@@ -2,10 +2,11 @@ import { basename } from 'node:path';
 import { cleanCommand } from './command.js';
 import type { Pty, PtyFactory } from './pty.js';
 import { SignalScanner } from './signals.js';
-import type { TerminalSize, TerminalSnapshot, TerminalSpec, TerminalStatus } from './types.js';
+import type { ReplaySnapshot, TerminalSize, TerminalSnapshot, TerminalSpec, TerminalStatus } from './types.js';
 
 export interface SessionEvents {
-  onData(id: string, chunk: string): void;
+  /** `seq` cresce a cada chunk, inclusive entre restarts. */
+  onData(id: string, chunk: string, seq: number): void;
   onUpdate(snapshot: TerminalSnapshot): void;
 }
 
@@ -35,6 +36,8 @@ export class TerminalSession {
   private idleTimer: NodeJS.Timeout | null = null;
   private replay: string[] = [];
   private replayBytes = 0;
+  /** Numero do ultimo chunk emitido. */
+  private seq = 0;
   private pendingRestart = false;
   private attention = false;
   private disposed = false;
@@ -74,8 +77,8 @@ export class TerminalSession {
   }
 
   /** Output recente, para popular a UI quando ela (re)anexa a sessao. */
-  replayBuffer(): string {
-    return this.replay.join('');
+  replayBuffer(): ReplaySnapshot {
+    return { data: this.replay.join(''), seq: this.seq };
   }
 
   isAlive(): boolean {
@@ -100,16 +103,14 @@ export class TerminalSession {
       });
     } catch (error) {
       this.pty = null;
-      this.pushReplay(`\r\n\x1b[31mFalha ao iniciar "${this.shell}": ${errorMessage(error)}\x1b[0m\r\n`);
-      this.events.onData(this.id, this.replay[this.replay.length - 1]!);
+      this.emitData(`\r\n\x1b[31mFalha ao iniciar "${this.shell}": ${errorMessage(error)}\x1b[0m\r\n`);
       this.setStatus('error');
       return;
     }
 
     this.pty.onData((chunk) => {
       if (this.disposed) return;
-      this.pushReplay(chunk);
-      this.events.onData(this.id, chunk);
+      this.emitData(chunk);
       const signal = this.scanner.scan(chunk);
       this.markActive();
       if (signal) this.raiseNotice(signal);
@@ -255,6 +256,12 @@ export class TerminalSession {
   private clearIdleTimer(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     this.idleTimer = null;
+  }
+
+  private emitData(chunk: string): void {
+    this.seq += 1;
+    this.pushReplay(chunk);
+    this.events.onData(this.id, chunk, this.seq);
   }
 
   private pushReplay(chunk: string): void {

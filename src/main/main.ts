@@ -30,6 +30,7 @@ import { JsonTasksStore } from '../infrastructure/persistence/json-tasks-store.j
 import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
 import { CHANNELS, type BootstrapState, type RestoredSession } from '../shared/contract.js';
 import { AttentionNotifier } from './attention.js';
+import { OutputBatcher } from './output-batcher.js';
 
 let mainWindow: BrowserWindow | null = null;
 let workspace: WorkspaceService;
@@ -39,6 +40,7 @@ let usage: UsageService;
 let notes: NotesService;
 let texts: TextsService;
 let tasks: TasksService;
+const output = new OutputBatcher((batch) => send(CHANNELS.data, batch));
 /** Posicao de cada terminal na area livre. Vive aqui porque a sessao nao sabe de layout. */
 const terminalRects = new Map<string, CanvasRect>();
 /**
@@ -207,7 +209,12 @@ function registerIpc(): void {
     persistTerminals();
   });
   ipcMain.handle(CHANNELS.interrupt, (_event, id: string) => terminals.interrupt(id));
-  ipcMain.handle(CHANNELS.replay, (_event, id: string) => terminals.replay(id));
+  ipcMain.handle(CHANNELS.replay, (_event, id: string) => {
+    // O que esta no lote entra no replay; entregar antes garante que nenhum
+    // lote misture chunks de antes e de depois dele.
+    output.flush();
+    return terminals.replay(id);
+  });
 
   ipcMain.on(CHANNELS.acknowledge, (_event, id: string) => terminals.acknowledge(id));
   ipcMain.on(CHANNELS.write, (_event, id: string, data: string) => terminals.write(id, data));
@@ -272,7 +279,7 @@ if (!app.requestSingleInstanceLock()) {
     tasks = new TasksService(new JsonTasksStore(app.getPath('userData')));
     attention = new AttentionNotifier(() => mainWindow);
     terminals = new TerminalService(new NodePtyFactory(), {
-      onData: (id, chunk) => send(CHANNELS.data, id, chunk),
+      onData: (id, chunk, seq) => output.push(id, chunk, seq),
       onUpdate: (snapshot) => {
         attention.observe(snapshot);
         send(CHANNELS.update, snapshot);
@@ -283,6 +290,7 @@ if (!app.requestSingleInstanceLock()) {
         attention.forget(id);
         terminalRects.delete(id);
         persistTerminals();
+        output.flush();
         send(CHANNELS.closed, id);
       },
     });
@@ -304,6 +312,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', () => {
     persistBounds();
     usage?.stop();
+    output.dispose();
     terminals?.closeAll();
     workspace?.flush();
     notes?.flush();
