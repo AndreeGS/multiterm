@@ -7,6 +7,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
+    "test": "node scripts/build.mjs --tests && node --test 'dist/test/unit/*.test.js'",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
     "postinstall": "electron-rebuild -f -w node-pty",

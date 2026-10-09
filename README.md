@@ -47,6 +47,7 @@ Outros comandos:
 npm start          # roda direto do diretorio do projeto
 npm run dev        # abre com DevTools
 npm run typecheck  # tsc --noEmit
+npm test           # testes unitarios do dominio (node:test, sem Electron)
 npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 ```
 
@@ -279,7 +280,8 @@ Duas regras evitam aviso falso:
   depois do `dispose()`; sem essa trava ele emitia um update para um terminal
   ja fechado e o contador "N aguardando" travava alto para sempre.
 
-Ambas tem teste de regressao em `src/test/pty-smoke.ts`.
+Ambas tem teste de regressao em `src/test/pty-smoke.ts` (PTY real) e em
+`src/test/unit/terminal.test.ts` (PTY falso).
 
 ### Pedido explicito do agente
 
@@ -360,13 +362,16 @@ src/
   main/            processo principal do Electron: janela + IPC + wiring
   renderer/        UI: paineis (terminal, nota, tarefas), grade, area livre, toolbar
   shared/          contrato de IPC tipado, compartilhado pelos tres bundles
-  test/            teste de integracao do PTY
+  test/            unit/ (node:test, logica pura) e pty-smoke (PTY real)
 ```
 
 Regras que mantem o acoplamento baixo:
 
 - `domain` nao importa nada de Electron nem de `node-pty`; depende da interface
-  `Pty`. E por isso que o `TerminalService` e testavel com um PTY falso.
+  `Pty`. E por isso que a `TerminalSession` e testavel com um PTY falso.
+- Testes unitarios ficam em `src/test/unit/*.test.ts`. O `npm test` empacota
+  cada arquivo com esbuild (os imports `.js` apontam para `.ts`, o que o Node
+  sozinho nao resolve) e roda com `node --test`.
 - O renderer nao tem acesso a Node: `contextIsolation` ligado e uma API unica
   exposta pelo `preload`, tipada em `shared/contract.ts`.
 - Nada e executado automaticamente. O app so sobe o shell que voce pediu, no

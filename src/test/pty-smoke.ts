@@ -1,17 +1,15 @@
 /**
  * Teste de integracao do nucleo: sobe um pty real, executa um comando,
  * confere o output e o ciclo de vida da sessao. Roda headless dentro do
- * Electron (node-pty e compilado para o ABI do Electron).
+ * Electron (node-pty e compilado para o ABI do Electron). A logica pura
+ * (scanner, comandos, parse dos arquivos) fica nos testes unitarios.
  *
  *   npm run smoke
  */
 import { app } from 'electron';
 import { tmpdir } from 'node:os';
 import { TerminalService } from '../application/terminal/terminal-service.js';
-import { withContinue } from '../domain/terminal/command.js';
-import { BELL, SignalScanner } from '../domain/terminal/signals.js';
-import { applyNotePatch, parseNotes } from '../domain/notes/note.js';
-import { parseConfig } from '../domain/workspace/config.js';
+import { BELL } from '../domain/terminal/signals.js';
 import type { TerminalSnapshot } from '../domain/terminal/types.js';
 import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
 
@@ -166,31 +164,13 @@ async function run(): Promise<void> {
   check('acknowledge limpa o pedido', service.snapshot(withCommand.id)?.notice === null);
   service.close(withCommand.id);
 
-  // 12. scanner: sequencia cortada entre chunks, progresso OSC 9;4, terminador ST
-  const scanner = new SignalScanner();
-  check('OSC partido entre chunks', scanner.scan('\x1b]9;fe') === null && scanner.scan('ito\x07') === 'feito');
-  check('OSC 9;4 (progresso) ignorado', scanner.scan('\x1b]9;4;1;50\x07') === null);
-  check('OSC terminado em ST', scanner.scan('\x1b]99;i=1;pronto\x1b\\') === 'pronto');
-  check('titulo com BEL nao vira sinal', scanner.scan('\x1b]2;titulo\x07texto') === null);
-
-  // 13. restaurar retoma a conversa do Claude
-  check('claude -> claude --continue', withContinue('claude') === 'claude --continue');
-  check('preserva flags', withContinue('claude --model opus') === 'claude --continue --model opus');
-  check('nao duplica', withContinue('claude -c') === 'claude -c' && withContinue('claude --resume x') === 'claude --resume x');
-  check('ignora outros comandos', withContinue('npm run dev') === 'npm run dev');
-
-  // 14. vinculo nota -> terminal sobrevive ao reinicio: o terminal restaurado reusa o id
+  // 12. vinculo nota -> terminal sobrevive ao reinicio: o terminal restaurado reusa o id
   const reused = service.create({ name: 'restaurado', cwd: tmpdir() }, undefined, 'id-da-sessao-anterior');
   check('restaurar reusa o id salvo', reused.id === 'id-da-sessao-anterior');
   const clash = service.create({ name: 'outro', cwd: tmpdir() }, undefined, 'id-da-sessao-anterior');
   check('id em uso nao e reaproveitado', clash.id !== 'id-da-sessao-anterior');
   service.close(reused.id);
   service.close(clash.id);
-  const saved = parseConfig({ terminals: [{ id: 'abc', name: 'x', cwd: '/tmp' }] });
-  check('config guarda o id do terminal', saved.terminals[0]?.id === 'abc');
-  const [note] = parseNotes({ notes: [{ id: 'n', terminalId: 'abc' }] });
-  check('nota guarda o vinculo', note?.terminalId === 'abc');
-  check('patch remove o vinculo', note !== undefined && applyNotePatch(note, { terminalId: null }, 0).terminalId === null);
 }
 
 void app.whenReady().then(async () => {
