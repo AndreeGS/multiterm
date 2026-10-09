@@ -1,10 +1,10 @@
 import { createReadStream } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { createInterface } from 'node:readline';
-import { estimateCost, normalizeModel, priceOf } from '../../domain/usage/pricing.js';
+import { basename, join } from 'node:path';
+import { priceOf } from '../../domain/usage/pricing.js';
+import { dayKeyFromDate, parseUsageLine } from '../../domain/usage/transcript.js';
 import { addTotals, emptyTotals, type UsageTotals } from '../../domain/usage/types.js';
+import { claudeProjectsDir } from './claude-paths.js';
 
 /** Totais de um dia (chave local YYYY-MM-DD), por modelo. */
 export type DailyUsage = Map<string, Map<string, UsageTotals>>;
@@ -18,7 +18,7 @@ const DAYS_KEPT = 8;
 
 /**
  * Le as transcricoes locais do Claude Code (`~/.claude/projects/**\/*.jsonl`) e
- * agrega tokens e custo estimado por dia e por modelo.
+ * agrega tokens e custo estimado por dia e por modelo, e por conversa.
  *
  * Leitura incremental: cada arquivo e lido apenas a partir do ponto onde parou
  * na ultima passada, e arquivos sem escrita recente sao ignorados. Tudo em
@@ -28,12 +28,19 @@ export class ClaudeTranscriptReader {
   private readonly cursors = new Map<string, FileCursor>();
   private readonly seen = new Set<string>();
   private readonly daily: DailyUsage = new Map();
+  /** Totais de cada conversa, desde o inicio do arquivo (nao so a janela de dias). */
+  private readonly sessions = new Map<string, UsageTotals>();
   private readonly unpriced = new Set<string>();
 
-  constructor(private readonly projectsDir = defaultProjectsDir()) {}
+  constructor(private readonly projectsDir = claudeProjectsDir()) {}
 
   get unpricedModels(): string[] {
     return [...this.unpriced];
+  }
+
+  /** Consumo por conversa (sessionId do Claude Code). */
+  get bySession(): ReadonlyMap<string, UsageTotals> {
+    return this.sessions;
   }
 
   async exists(): Promise<boolean> {
@@ -85,67 +92,49 @@ export class ClaudeTranscriptReader {
     return found;
   }
 
+  /**
+   * Le do ponto onde parou ate o fim, mas so avanca o cursor ate a ultima
+   * quebra de linha: uma linha ainda sendo escrita fica para a proxima passada
+   * em vez de ser descartada como JSON quebrado.
+   */
   private async ingest(file: string, cursor: FileCursor, size: number): Promise<void> {
-    const stream = createReadStream(file, { start: cursor.offset, encoding: 'utf8' });
-    const lines = createInterface({ input: stream, crlfDelay: Infinity });
-    for await (const line of lines) {
-      if (line.length > 0) this.accept(line);
+    const stream = createReadStream(file, { start: cursor.offset, end: size - 1 });
+    let pending: Buffer = Buffer.alloc(0);
+    for await (const chunk of stream as AsyncIterable<Buffer>) {
+      pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
+      let newline = pending.indexOf(NEWLINE);
+      while (newline >= 0) {
+        const line = pending.toString('utf8', 0, newline);
+        cursor.offset += newline + 1;
+        if (line.length > 0) this.accept(line, file);
+        pending = pending.subarray(newline + 1);
+        newline = pending.indexOf(NEWLINE);
+      }
     }
-    cursor.offset = size;
   }
 
-  private accept(line: string): void {
-    let record: Record<string, unknown>;
-    try {
-      record = JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      return; // linha truncada na borda da leitura anterior
-    }
-    if (record.type !== 'assistant') return;
-
-    const message = record.message as Record<string, unknown> | undefined;
-    const usage = message?.usage as Record<string, unknown> | undefined;
-    if (!usage) return;
+  private accept(line: string, file: string): void {
+    const record = parseUsageLine(line);
+    if (!record) return;
 
     // A mesma resposta pode aparecer em mais de um arquivo (retomadas, sidechains).
-    const key = `${String(message?.id ?? '')}:${String(record.requestId ?? '')}`;
-    if (key !== ':' && this.seen.has(key)) return;
-    if (key !== ':') this.seen.add(key);
+    if (record.key !== null) {
+      if (this.seen.has(record.key)) return;
+      this.seen.add(record.key);
+    }
 
-    const day = dayKey(String(record.timestamp ?? ''));
-    if (!day) return;
+    if (!priceOf(record.model)) this.unpriced.add(record.model);
 
-    const model = normalizeModel(String(message?.model ?? 'desconhecido'));
-    if (!priceOf(model)) this.unpriced.add(model);
+    const byModel = this.daily.get(record.day) ?? new Map<string, UsageTotals>();
+    const current = byModel.get(record.model) ?? emptyTotals();
+    addTotals(current, record.totals);
+    byModel.set(record.model, current);
+    this.daily.set(record.day, byModel);
 
-    const cacheDetail = usage.cache_creation as Record<string, unknown> | undefined;
-    const write1h = num(cacheDetail?.ephemeral_1h_input_tokens);
-    const writeTotal = num(usage.cache_creation_input_tokens);
-    const write5m = Math.max(0, writeTotal - write1h);
-    const cacheRead = num(usage.cache_read_input_tokens);
-    const input = num(usage.input_tokens);
-    const output = num(usage.output_tokens);
-
-    const totals: UsageTotals = {
-      inputTokens: input,
-      outputTokens: output,
-      cacheWriteTokens: writeTotal,
-      cacheReadTokens: cacheRead,
-      costUsd: estimateCost(model, {
-        input,
-        output,
-        cacheWrite5m: write5m,
-        cacheWrite1h: write1h,
-        cacheRead,
-      }),
-      requests: 1,
-    };
-
-    const byModel = this.daily.get(day) ?? new Map<string, UsageTotals>();
-    const current = byModel.get(model) ?? emptyTotals();
-    addTotals(current, totals);
-    byModel.set(model, current);
-    this.daily.set(day, byModel);
+    const sessionId = record.sessionId ?? basename(file, '.jsonl');
+    const session = this.sessions.get(sessionId) ?? emptyTotals();
+    addTotals(session, record.totals);
+    this.sessions.set(sessionId, session);
   }
 
   private prune(cutoff: number): void {
@@ -156,23 +145,4 @@ export class ClaudeTranscriptReader {
   }
 }
 
-function defaultProjectsDir(): string {
-  const base = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
-  return join(base, 'projects');
-}
-
-function num(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
-/** Dia local (nao UTC): "hoje" deve bater com o relogio de quem olha a barra. */
-export function dayKeyFromDate(date: Date): string {
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  return `${date.getFullYear()}-${month}-${day}`;
-}
-
-function dayKey(timestamp: string): string | null {
-  const date = new Date(timestamp);
-  return Number.isNaN(date.getTime()) ? null : dayKeyFromDate(date);
-}
+const NEWLINE = 0x0a;

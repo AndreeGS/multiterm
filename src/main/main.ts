@@ -1,6 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { TerminalService } from '../application/terminal/terminal-service.js';
@@ -12,7 +11,7 @@ import { WorkspaceService } from '../application/workspace/workspace-service.js'
 import type { NotePatch } from '../domain/notes/note.js';
 import type { CanvasTextPatch } from '../domain/canvas/text.js';
 import type { TaskListPatch } from '../domain/tasks/task-list.js';
-import { claudeProjectKey, isClaudeCommand, withContinue } from '../domain/terminal/command.js';
+import { isClaudeCommand, withContinue } from '../domain/terminal/command.js';
 import type { TerminalSpec } from '../domain/terminal/types.js';
 import type { SavedTerminal } from '../domain/workspace/config.js';
 import {
@@ -31,6 +30,7 @@ import { JsonNotesStore } from '../infrastructure/persistence/json-notes-store.j
 import { JsonTextsStore } from '../infrastructure/persistence/json-texts-store.js';
 import { JsonTasksStore } from '../infrastructure/persistence/json-tasks-store.js';
 import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
+import { hasClaudeTranscript, hasProjectConversations } from '../infrastructure/usage/claude-paths.js';
 import { CHANNELS, type BootstrapState, type RestoredSession } from '../shared/contract.js';
 import { AttentionNotifier } from './attention.js';
 import { OutputBatcher } from './output-batcher.js';
@@ -113,6 +113,7 @@ function persistTerminals(): void {
     shell: snapshot.shell,
     ...(snapshot.command ? { command: snapshot.command } : {}),
     ...(snapshot.color ? { color: snapshot.color } : {}),
+    ...(snapshot.claudeSession ? { claudeSession: snapshot.claudeSession } : {}),
     rect: terminalRects.get(snapshot.id) ?? null,
   }));
   workspace.setTerminals([...live, ...pendingSession]);
@@ -129,8 +130,10 @@ function restoreSession(): RestoredSession {
         name: entry.name,
         cwd: entry.cwd,
         shell: entry.shell,
-        command: entry.command ? resumeCommand(entry.command, entry.cwd) : undefined,
+        // Com a conversa salva, o proprio terminal a retoma (`--resume <id>`).
+        command: entry.command && !entry.claudeSession ? resumeCommand(entry.command, entry.cwd) : entry.command,
         color: entry.color ?? null,
+        claudeSession: entry.claudeSession ?? null,
       }, undefined, entry.id);
       restored.terminals.push(snapshot);
       if (entry.rect) {
@@ -146,13 +149,13 @@ function restoreSession(): RestoredSession {
 }
 
 /**
- * Ao restaurar, um `claude` volta para a conversa onde estava (`--continue`).
- * So quando ha conversa salva para o diretorio: sem ela o `--continue` falha.
+ * Terminal salvo antes de existir a conversa por terminal: um `claude` volta
+ * para a ultima conversa do diretorio (`--continue`). So quando ha conversa
+ * salva para o diretorio: sem ela o `--continue` falha.
  */
 function resumeCommand(command: string, cwd: string): string {
   if (!isClaudeCommand(command)) return command;
-  const base = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
-  return existsSync(join(base, 'projects', claudeProjectKey(cwd))) ? withContinue(command) : command;
+  return hasProjectConversations(cwd) ? withContinue(command) : command;
 }
 
 function registerIpc(): void {
@@ -311,7 +314,7 @@ if (!app.requestSingleInstanceLock()) {
         output.flush();
         send(CHANNELS.closed, id);
       },
-    });
+    }, (sessionId) => hasClaudeTranscript(sessionId));
 
     usage = new UsageService(undefined, (summary) => send(CHANNELS.usageUpdate, summary));
 

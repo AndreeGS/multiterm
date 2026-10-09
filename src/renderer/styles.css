@@ -957,3 +957,15 @@ button.swatch.selected:hover:not(:disabled) { border-color: var(--fg); }
   border-left-color: var(--bg);
   padding: 4px 6px;
 }
+
+/* ---------- consumo da conversa do terminal ---------- */
+.pane-usage {
+  flex: none;
+  font-size: 11px;
+  color: var(--fg-dim);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}

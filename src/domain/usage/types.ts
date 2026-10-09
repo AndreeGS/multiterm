@@ -21,6 +21,8 @@ export interface UsageSummary {
   readonly weekByModel: ModelBreakdown[];
   /** Modelos sem preco na tabela — contam tokens, mas nao custo. */
   readonly unpricedModels: string[];
+  /** Consumo de cada conversa do Claude Code (pelo sessionId), da conversa inteira. */
+  readonly bySession: Record<string, UsageTotals>;
   readonly updatedAt: number;
   /** false quando nao ha transcricoes do Claude Code nesta maquina. */
   readonly available: boolean;
@@ -60,6 +62,7 @@ export function emptySummary(available = false): UsageSummary {
     todayByModel: [],
     weekByModel: [],
     unpricedModels: [],
+    bySession: {},
     updatedAt: Date.now(),
     available,
   };
