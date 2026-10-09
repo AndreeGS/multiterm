@@ -18,8 +18,8 @@ export class FramesService {
     return [...this.frames.values()];
   }
 
-  create(rect: CanvasRect): CanvasFrame {
-    const frame = createFrame(randomUUID(), rect, Date.now());
+  create(rect: CanvasRect, workspaceId: string): CanvasFrame {
+    const frame = createFrame(randomUUID(), rect, workspaceId, Date.now());
     this.frames.set(frame.id, frame);
     this.scheduleSave();
     return frame;
@@ -34,6 +34,17 @@ export class FramesService {
 
   remove(id: string): void {
     if (this.frames.delete(id)) this.scheduleSave();
+  }
+
+  /** Apaga tudo de um workspace que esta sendo removido. */
+  removeWorkspace(workspaceId: string): void {
+    let changed = false;
+    for (const [id, item] of this.frames) {
+      if (item.workspaceId !== workspaceId) continue;
+      this.frames.delete(id);
+      changed = true;
+    }
+    if (changed) this.scheduleSave();
   }
 
   /** Grava imediatamente (usado no encerramento do app). */

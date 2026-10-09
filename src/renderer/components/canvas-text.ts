@@ -49,6 +49,10 @@ export class CanvasTextItem {
     return this.text.id;
   }
 
+  get workspaceId(): string {
+    return this.text.workspaceId;
+  }
+
   /** Retangulo no mundo, para o "Ajustar" enquadrar os textos tambem. */
   get worldRect(): CanvasRect {
     return {

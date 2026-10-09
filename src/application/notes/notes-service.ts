@@ -20,8 +20,8 @@ export class NotesService {
     return [...this.notes.values()];
   }
 
-  create(): Note {
-    const note = createNote(randomUUID(), `Nota ${this.notes.size + 1}`, Date.now());
+  create(workspaceId: string): Note {
+    const note = createNote(randomUUID(), `Nota ${this.notes.size + 1}`, workspaceId, Date.now());
     this.notes.set(note.id, note);
     this.scheduleSave();
     return note;
@@ -36,6 +36,17 @@ export class NotesService {
 
   remove(id: string): void {
     if (this.notes.delete(id)) this.scheduleSave();
+  }
+
+  /** Apaga tudo de um workspace que esta sendo removido. */
+  removeWorkspace(workspaceId: string): void {
+    let changed = false;
+    for (const [id, item] of this.notes) {
+      if (item.workspaceId !== workspaceId) continue;
+      this.notes.delete(id);
+      changed = true;
+    }
+    if (changed) this.scheduleSave();
   }
 
   /** Grava imediatamente (usado no encerramento do app). */

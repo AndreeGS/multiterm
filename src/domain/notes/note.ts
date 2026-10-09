@@ -1,5 +1,6 @@
 import { parseCanvasRect, type CanvasRect } from '../workspace/layout.js';
 import { parseTerminalId } from '../terminal/link.js';
+import { parseWorkspaceId } from '../workspace/workspace.js';
 
 /** Bloco de notas. Diferente dos terminais, sobrevive ao reinicio do app. */
 export interface Note {
@@ -10,6 +11,7 @@ export interface Note {
   readonly rect: CanvasRect | null;
   /** Terminal vinculado: recebe o Ctrl+Enter. `null` = nenhum. */
   readonly terminalId: string | null;
+  readonly workspaceId: string;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -19,12 +21,14 @@ export interface NotePatch {
   content?: string;
   rect?: CanvasRect | null;
   terminalId?: string | null;
+  /** Mover para outro workspace (o main confere que ele existe). */
+  workspaceId?: string;
 }
 
 export const MAX_TITLE_LENGTH = 80;
 
-export function createNote(id: string, title: string, now: number): Note {
-  return { id, title: cleanTitle(title) || 'Nota', content: '', rect: null, terminalId: null, createdAt: now, updatedAt: now };
+export function createNote(id: string, title: string, workspaceId: string, now: number): Note {
+  return { id, title: cleanTitle(title) || 'Nota', content: '', rect: null, terminalId: null, workspaceId, createdAt: now, updatedAt: now };
 }
 
 /** Aplica so os campos validos do patch; titulo vazio mantem o anterior. */
@@ -36,6 +40,7 @@ export function applyNotePatch(note: Note, patch: NotePatch, now: number): Note 
     content: typeof patch.content === 'string' ? patch.content : note.content,
     rect: patch.rect === undefined ? note.rect : parseCanvasRect(patch.rect),
     terminalId: patch.terminalId === undefined ? note.terminalId : parseTerminalId(patch.terminalId),
+    workspaceId: patch.workspaceId === undefined ? note.workspaceId : parseWorkspaceId(patch.workspaceId),
     updatedAt: now,
   };
 }
@@ -56,6 +61,7 @@ export function parseNotes(raw: unknown): Note[] {
       content: typeof input.content === 'string' ? input.content : '',
       rect: parseCanvasRect(input.rect),
       terminalId: parseTerminalId(input.terminalId),
+      workspaceId: parseWorkspaceId(input.workspaceId),
       createdAt,
       updatedAt: Number.isFinite(input.updatedAt) ? (input.updatedAt as number) : createdAt,
     });

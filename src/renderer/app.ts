@@ -3,6 +3,7 @@ import type { TaskList } from '../domain/tasks/task-list.js';
 import type { TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js';
 import type { TerminalTemplate } from '../domain/workspace/template.js';
 import type { WorktreeInfo } from '../domain/git/worktree.js';
+import type { Workspace, WorkspaceSummary } from '../domain/workspace/workspace.js';
 import type { UsageSummary, UsageTotals } from '../domain/usage/types.js';
 import { capacity, isGridLayout, layoutFor, type CanvasRect, type LayoutId } from '../domain/workspace/layout.js';
 import type { SavedTerminal } from '../domain/workspace/config.js';
@@ -16,6 +17,7 @@ import { TerminalGrid } from './components/grid.js';
 import { openNewTerminalDialog } from './components/new-terminal-dialog.js';
 import { NotePane } from './components/note-pane.js';
 import { openSettingsDialog } from './components/settings-dialog.js';
+import { openPrompt } from './components/prompt-dialog.js';
 import type { Board, LinkLabel, Panel } from './components/panel.js';
 import { TaskPane } from './components/task-pane.js';
 import { terminalPlace, TerminalPane } from './components/terminal-pane.js';
@@ -30,7 +32,10 @@ import { applyDocumentSettings } from './theme.js';
  */
 export class App {
   private readonly panes = new Map<string, Panel>();
+  /** Todos os paineis, de todos os workspaces, na ordem de criacao. */
   private readonly order: string[] = [];
+  private workspaces: WorkspaceSummary[] = [];
+  private activeWorkspace = '';
   private readonly toolbar: Toolbar;
   private readonly grid: TerminalGrid;
   private readonly canvas: CanvasBoard;
@@ -68,6 +73,7 @@ export class App {
     this.toolbar = new Toolbar({
       onNewTerminal: () => void this.promptNewTerminal(),
       onTemplates: () => void this.openTemplates(),
+      onWorkspaces: () => void this.openWorkspaces(),
       onNewNote: () => void this.createNote(),
       onNewTaskList: () => void this.createTaskList(),
       onLayout: (next) => this.setLayout(next),
@@ -115,10 +121,12 @@ export class App {
     this.templates = state.templates;
     this.defaultDir = state.defaultDir;
     setHomeDir(state.homeDir);
+    this.workspaces = state.workspaces;
+    this.activeWorkspace = state.activeWorkspace;
     this.grid.setSizes(state.layoutSizes);
-    if (state.canvasView) this.canvas.restoreView(state.canvasView);
     this.canvas.setTexts(state.texts);
     this.canvas.setFrames(state.frames);
+    this.canvas.setWorkspace(state.activeWorkspace, state.canvasView);
     for (const note of state.notes) this.addNote(note);
     for (const list of state.taskLists) this.addTaskList(list);
     for (const snapshot of state.terminals) {
@@ -133,6 +141,7 @@ export class App {
       if (source.terminalId && !this.linkLabel(source.terminalId)) source.setLink(null);
     }
     this.refreshLinks();
+    this.refreshWorkspaceUi();
     this.applyLayout(state.layout);
   }
 
@@ -148,10 +157,13 @@ export class App {
     for (const snapshot of terminals) this.addTerminal(snapshot, terminalRects[snapshot.id] ?? null);
     // Os terminais voltam com o mesmo id: os vinculos de notas e listas reacendem.
     this.refreshLinks();
-    const needed = layoutFor(this.order.length);
+    const needed = layoutFor(this.visibleIds().length);
     if (isGridLayout(this.layout) && capacity(needed) > capacity(this.layout)) this.setLayout(needed);
     this.sync();
-    this.focus(terminals[0]!.id);
+    this.refreshWorkspaceUi();
+    // Pode ter voltado terminal de outro workspace: o foco vai para um deste.
+    const first = terminals.find((snapshot) => snapshot.workspaceId === this.activeWorkspace);
+    if (first) this.focus(first.id);
   }
 
   private async discardSession(): Promise<void> {
@@ -175,10 +187,12 @@ export class App {
     this.api.onTerminalUpdate((snapshot) => {
       const pane = this.panes.get(snapshot.id);
       const renamed = pane instanceof TerminalPane && pane.name !== snapshot.name;
+      const moved = pane instanceof TerminalPane && pane.workspaceId !== snapshot.workspaceId;
       if (pane instanceof TerminalPane) pane.update(snapshot);
       this.trackAttention(snapshot);
       // O 🔗 das notas e listas mostra o nome do terminal.
       if (renamed) this.refreshLinks();
+      if (moved) this.sync();
     });
     this.api.onTerminalClose((id) => this.removePane(id));
     this.api.onUsageUpdate((summary) => this.applyUsageSummary(summary));
@@ -215,7 +229,8 @@ export class App {
       case 'settings': return void this.openSettings();
       case 'palette': return void this.openCommandPalette();
       case 'next-attention': return this.goToNextAttention();
-      case 'focus-index': return this.goTo(this.order[shortcut.index]);
+      case 'workspaces': return void this.openWorkspaces();
+      case 'focus-index': return this.goTo(this.visibleIds()[shortcut.index]);
       case 'focus-step': return this.stepFocus(shortcut.delta);
       case 'close-pane':
         if (this.focusedId) void this.closePane(this.focusedId);
@@ -228,24 +243,196 @@ export class App {
 
   /** Traz o painel para a tela (pagina/vista) e da foco a ele. */
   private goTo(id: string | undefined): void {
-    if (!id || !this.panes.has(id)) return;
-    this.board.revealPane(id);
-    this.focus(id);
+    const pane = id ? this.panes.get(id) : undefined;
+    if (!pane) return;
+    // Painel de outro workspace: troca para ele antes.
+    if (pane.workspaceId !== this.activeWorkspace) {
+      void this.switchWorkspace(pane.workspaceId, pane.id);
+      return;
+    }
+    this.board.revealPane(pane.id);
+    this.focus(pane.id);
   }
 
   private stepFocus(delta: 1 | -1): void {
-    if (this.order.length === 0) return;
-    const current = this.focusedId ? this.order.indexOf(this.focusedId) : -1;
+    const visible = this.visibleIds();
+    if (visible.length === 0) return;
+    const current = this.focusedId ? visible.indexOf(this.focusedId) : -1;
     const next = current < 0
-      ? (delta > 0 ? 0 : this.order.length - 1)
-      : (current + delta + this.order.length) % this.order.length;
-    this.goTo(this.order[next]);
+      ? (delta > 0 ? 0 : visible.length - 1)
+      : (current + delta + visible.length) % visible.length;
+    this.goTo(visible[next]);
+  }
+
+  /** Paineis do workspace em uso, na ordem de criacao. */
+  private visibleIds(): string[] {
+    return this.order.filter((id) => this.panes.get(id)?.workspaceId === this.activeWorkspace);
+  }
+
+  private workspaceName(id: string): string {
+    return this.workspaces.find((w) => w.id === id)?.name ?? '?';
+  }
+
+  /** Nome na barra, e o ponto quando algum terminal de outro workspace aguarda. */
+  private refreshWorkspaceUi(): void {
+    const elsewhere = [...this.attention].some((id) => this.panes.get(id)?.workspaceId !== this.activeWorkspace);
+    this.toolbar.setWorkspace(this.workspaceName(this.activeWorkspace), elsewhere);
+  }
+
+  /**
+   * Passa a mostrar outro workspace: os paineis dele, com o layout, as
+   * proporcoes e a vista dele. Os terminais que saem de vista continuam
+   * rodando (e avisando). `focusId` = painel a focar depois.
+   */
+  private async switchWorkspace(id: string, focusId?: string): Promise<void> {
+    if (id !== this.activeWorkspace) this.applyWorkspace(await this.api.switchWorkspace(id));
+    const target = focusId ?? (this.focusedId && this.visibleIds().includes(this.focusedId) ? this.focusedId : this.visibleIds()[0]);
+    if (target) this.goTo(target);
+  }
+
+  private applyWorkspace(workspace: Workspace): void {
+    this.activeWorkspace = workspace.id;
+    if (this.focusedId && this.panes.get(this.focusedId)?.workspaceId !== workspace.id) {
+      this.panes.get(this.focusedId)?.setFocused(false);
+      this.focusedId = null;
+    }
+    this.grid.setSizes(workspace.layoutSizes);
+    this.canvas.setWorkspace(workspace.id, workspace.canvasView);
+    this.applyLayout(workspace.layout);
+    this.refreshLinks();
+    this.refreshWorkspaceUi();
+  }
+
+  /** Paleta dos workspaces: trocar, e as acoes sobre eles. */
+  private async openWorkspaces(): Promise<void> {
+    if (this.dialogOpen) return;
+    const items: PaletteItem[] = this.workspaces.map((workspace) => {
+      const ids = this.order.filter((id) => this.panes.get(id)?.workspaceId === workspace.id);
+      const terminals = ids.filter((id) => this.panes.get(id) instanceof TerminalPane).length;
+      const waiting = ids.filter((id) => this.attention.has(id)).length;
+      return {
+        label: workspace.name,
+        detail: [
+          workspace.id === this.activeWorkspace ? 'em uso' : '',
+          `${terminals} terminal${terminals === 1 ? '' : 'is'}`,
+          waiting ? `${waiting} aguardando` : '',
+        ].filter(Boolean).join(' · '),
+        attention: waiting > 0,
+        run: () => void this.switchWorkspace(workspace.id),
+      };
+    });
+    items.push(...this.workspaceActions());
+    this.dialogOpen = true;
+    let chosen: PaletteItem | null = null;
+    try {
+      chosen = await openPalette(items, 'Trocar de workspace…');
+    } finally {
+      this.dialogOpen = false;
+    }
+    chosen?.run();
+  }
+
+  /** Criar, renomear, apagar e mover para outro: entram na paleta geral tambem. */
+  private workspaceActions(): PaletteItem[] {
+    const active = this.workspaceName(this.activeWorkspace);
+    const items: PaletteItem[] = [
+      { label: 'Novo workspace…', hint: 'Ctrl+Shift+O', run: () => void this.createWorkspace() },
+      { label: `Renomear workspace "${active}"…`, run: () => void this.renameWorkspace() },
+    ];
+    if (this.workspaces.length > 1) {
+      items.push({ label: `Apagar workspace "${active}"…`, run: () => void this.deleteWorkspace() });
+      const focused = this.focusedId ? this.panes.get(this.focusedId) : undefined;
+      if (focused) {
+        items.push({ label: `Mover "${paneLabel(focused)}" para outro workspace…`, run: () => void this.movePane(focused) });
+      }
+    }
+    return items;
+  }
+
+  private async createWorkspace(): Promise<void> {
+    if (this.dialogOpen) return;
+    this.dialogOpen = true;
+    let name: string | null;
+    try {
+      name = await openPrompt('Novo workspace', '', 'ex.: Projeto X, Infra, Estudos');
+    } finally {
+      this.dialogOpen = false;
+    }
+    if (!name) return;
+    const workspace = await this.api.createWorkspace(name);
+    if (!workspace) {
+      window.alert('Limite de workspaces atingido. Apague um antes de criar outro.');
+      return;
+    }
+    this.workspaces = [...this.workspaces, { id: workspace.id, name: workspace.name }];
+    await this.switchWorkspace(workspace.id);
+  }
+
+  private async renameWorkspace(): Promise<void> {
+    if (this.dialogOpen) return;
+    this.dialogOpen = true;
+    let name: string | null;
+    try {
+      name = await openPrompt('Renomear workspace', this.workspaceName(this.activeWorkspace));
+    } finally {
+      this.dialogOpen = false;
+    }
+    if (!name) return;
+    this.workspaces = await this.api.renameWorkspace(this.activeWorkspace, name);
+    this.refreshWorkspaceUi();
+  }
+
+  /** Apaga o workspace em uso e tudo dele, depois de dizer o que vai junto. */
+  private async deleteWorkspace(): Promise<void> {
+    const id = this.activeWorkspace;
+    const panes = this.order.map((paneId) => this.panes.get(paneId)!).filter((pane) => pane.workspaceId === id);
+    const terminals = panes.filter((pane) => pane instanceof TerminalPane).length;
+    const others = panes.length - terminals;
+    const what = [
+      terminals ? `${terminals} terminal${terminals === 1 ? '' : 'is'} (os processos sao encerrados)` : '',
+      others ? `${others} nota${others === 1 ? '' : 's'}/lista${others === 1 ? '' : 's'}` : '',
+      'os textos e grupos da area livre',
+    ].filter(Boolean).join(', ');
+    if (!window.confirm(`Apagar o workspace "${this.workspaceName(id)}"?\n\nVai junto: ${what}. Nao da para desfazer.`)) return;
+    const next = await this.api.deleteWorkspace(id);
+    if (!next) return;
+    // Terminais saem pelo evento de fechamento; notas e listas o main ja apagou.
+    for (const pane of panes) if (!(pane instanceof TerminalPane)) this.removePane(pane.id);
+    this.canvas.forgetWorkspace(id);
+    this.workspaces = this.workspaces.filter((w) => w.id !== id);
+    this.applyWorkspace(next);
+    const first = this.visibleIds()[0];
+    if (first) this.goTo(first);
+  }
+
+  /** Leva um painel para outro workspace (ele some daqui e aparece la). */
+  private async movePane(pane: Panel): Promise<void> {
+    const targets = this.workspaces.filter((w) => w.id !== pane.workspaceId);
+    if (this.dialogOpen || targets.length === 0) return;
+    this.dialogOpen = true;
+    let chosen: PaletteItem | null = null;
+    try {
+      chosen = await openPalette(targets.map((workspace) => ({
+        label: workspace.name,
+        run: () => {
+          if (pane instanceof TerminalPane) void this.api.moveTerminalToWorkspace(pane.id, workspace.id);
+          else if (pane instanceof NotePane || pane instanceof TaskPane) pane.moveToWorkspace(workspace.id);
+        },
+      })), `Mover "${paneLabel(pane)}" para qual workspace?`);
+    } finally {
+      this.dialogOpen = false;
+    }
+    if (!chosen) return;
+    chosen.run();
+    // O terminal sai quando o update chegar; nota e lista ja mudaram aqui.
+    if (!(pane instanceof TerminalPane)) this.sync();
   }
 
   private async openCommandPalette(): Promise<void> {
     if (this.dialogOpen) return;
     this.dialogOpen = true;
-    const items: PaletteItem[] = this.order.map((id, index) => {
+    const visible = this.visibleIds();
+    const items: PaletteItem[] = visible.map((id, index) => {
       const pane = this.panes.get(id)!;
       return {
         label: paneLabel(pane),
@@ -255,6 +442,17 @@ export class App {
         run: () => this.goTo(id),
       };
     });
+    // Paineis dos outros workspaces tambem: escolher um troca para la.
+    for (const id of this.order) {
+      const pane = this.panes.get(id)!;
+      if (pane.workspaceId === this.activeWorkspace) continue;
+      items.push({
+        label: paneLabel(pane),
+        detail: `▤ ${this.workspaceName(pane.workspaceId)} · ${paneDetail(pane)}`,
+        attention: this.attention.has(id),
+        run: () => this.goTo(id),
+      });
+    }
     const focused = this.focusedId;
     items.push(
       { label: 'Novo terminal', hint: 'Ctrl+Shift+T', run: () => void this.promptNewTerminal() },
@@ -271,6 +469,12 @@ export class App {
       );
     }
     items.push(...this.templateItems());
+    for (const workspace of this.workspaces) {
+      if (workspace.id !== this.activeWorkspace) {
+        items.push({ label: `Workspace: ${workspace.name}`, run: () => void this.switchWorkspace(workspace.id) });
+      }
+    }
+    items.push(...this.workspaceActions());
     for (const template of this.templates) {
       items.push({ label: `Apagar template: ${template.name}`, run: () => void this.deleteTemplate(template) });
     }
@@ -448,8 +652,9 @@ export class App {
       pane instanceof NotePane || pane instanceof TaskPane);
   }
 
-  private terminalPanes(): TerminalPane[] {
-    return this.order
+  /** Terminais do workspace em uso (os que da para vincular); `all` = de todos. */
+  private terminalPanes(all = false): TerminalPane[] {
+    return (all ? this.order : this.visibleIds())
       .map((id) => this.panes.get(id))
       .filter((pane): pane is TerminalPane => pane instanceof TerminalPane);
   }
@@ -606,7 +811,7 @@ export class App {
   /** Exibe um painel recem-criado e da foco a ele. */
   private showNew(id: string): void {
     // Cresce a grade automaticamente ate caber, sem passar do escolhido.
-    const needed = layoutFor(this.order.length);
+    const needed = layoutFor(this.visibleIds().length);
     if (isGridLayout(this.layout) && capacity(needed) > capacity(this.layout)) this.setLayout(needed);
     this.sync();
     this.board.revealPane(id);
@@ -638,7 +843,7 @@ export class App {
    * sempre fica. Outro terminal ainda no mesmo worktree: nem pergunta.
    */
   private async offerWorktreeRemoval(worktree: WorktreeInfo): Promise<void> {
-    if (this.terminalPanes().some((pane) => pane.info.worktree?.path === worktree.path)) return;
+    if (this.terminalPanes(true).some((pane) => pane.info.worktree?.path === worktree.path)) return;
     let dirty: boolean;
     try {
       dirty = await this.api.worktreeDirty(worktree);
@@ -675,6 +880,7 @@ export class App {
     if (snapshot.needsAttention) this.attention.add(snapshot.id);
     else this.attention.delete(snapshot.id);
     this.toolbar.setAttention(this.attention.size);
+    this.refreshWorkspaceUi();
   }
 
   private acknowledge(id: string): void {
@@ -682,7 +888,10 @@ export class App {
     // Sempre avisa o main: o contador da UI e o estado da sessao podem estar
     // dessincronizados, e do lado de la o acknowledge e no-op quando nao ha nada.
     this.api.acknowledgeTerminal(id);
-    if (this.attention.delete(id)) this.toolbar.setAttention(this.attention.size);
+    if (this.attention.delete(id)) {
+      this.toolbar.setAttention(this.attention.size);
+      this.refreshWorkspaceUi();
+    }
   }
 
   private goToNextAttention(): void {
@@ -704,7 +913,7 @@ export class App {
 
   private applyUsageSummary(summary: UsageSummary): void {
     this.usageBySession = summary.bySession;
-    for (const pane of this.terminalPanes()) this.applyUsage(pane);
+    for (const pane of this.terminalPanes(true)) this.applyUsage(pane);
   }
 
   private applyUsage(pane: TerminalPane): void {
@@ -797,13 +1006,14 @@ export class App {
   }
 
   private sync(): void {
-    const hasPanes = this.order.length > 0;
+    const visible = this.visibleIds();
+    const hasPanes = visible.length > 0;
     this.emptyState.hidden = hasPanes;
     // A area livre fica visivel mesmo vazia: o fundo e onde se trabalha.
     this.grid.element.hidden = !hasPanes || this.board !== this.grid;
     this.canvas.element.hidden = this.board !== this.canvas;
-    this.board.setPanes(this.order.map((id) => this.panes.get(id)!).filter(Boolean));
-    this.order.forEach((id, index) => {
+    this.board.setPanes(visible.map((id) => this.panes.get(id)!));
+    visible.forEach((id, index) => {
       const header = this.panes.get(id)?.header;
       if (!header) return;
       if (index < 9) header.dataset.index = String(index + 1);

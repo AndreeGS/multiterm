@@ -261,7 +261,7 @@ body.dragging .pane-body { pointer-events: none; user-select: none; }
 .canvas.panning { cursor: grabbing; }
 .canvas-texts { position: absolute; left: 0; top: 0; }
 /* Com textos no quadro, ele ja nao esta "vazio": o aviso so atrapalharia. */
-.grid-wrap:has(.canvas:not([hidden]) .canvas-text) .empty { display: none; }
+.grid-wrap:has(.canvas:not([hidden]) .canvas-text:not([hidden])) .empty { display: none; }
 
 /* ---------- textos soltos ---------- */
 .canvas-text {
@@ -978,7 +978,7 @@ button.swatch.selected:hover:not(:disabled) { border-color: var(--fg); }
 
 /* ---------- grupos (molduras) na area livre ---------- */
 .canvas-frames { position: absolute; left: 0; top: 0; }
-.grid-wrap:has(.canvas:not([hidden]) .canvas-frame) .empty { display: none; }
+.grid-wrap:has(.canvas:not([hidden]) .canvas-frame:not([hidden])) .empty { display: none; }
 .canvas-frame {
   --frame-color: var(--fg-dim);
   position: absolute;
@@ -1029,3 +1029,13 @@ button.swatch.selected:hover:not(:disabled) { border-color: var(--fg); }
 }
 .canvas-frame:has(.canvas-frame-title:hover) .canvas-frame-resize,
 .canvas-frame-resize:hover { opacity: 1; }
+
+/* ---------- workspaces ---------- */
+.modal.prompt { width: min(420px, calc(90vw / var(--ui-zoom))); }
+.workspace-btn {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-btn.attention::after { content: ' ●'; color: var(--idle); }

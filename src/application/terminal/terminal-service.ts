@@ -83,6 +83,10 @@ export class TerminalService {
     this.sessions.get(id)?.rename(name);
   }
 
+  moveToWorkspace(id: string, workspaceId: string): void {
+    this.sessions.get(id)?.moveToWorkspace(workspaceId);
+  }
+
   setColor(id: string, color: PaneColor | null): void {
     this.sessions.get(id)?.setColor(color);
   }

@@ -61,6 +61,8 @@ export class CanvasBoard implements Board {
   /** Frame agendado para aplicar o zoom aos paineis (0 = nenhum). */
   private pendingFrame = 0;
   private maximizedId: string | null = null;
+  /** Textos e grupos de outros workspaces ficam escondidos (os paineis o App filtra). */
+  private workspaceId = '';
   private topZ = 1;
   private cascade = 0;
 
@@ -121,6 +123,32 @@ export class CanvasBoard implements Board {
   /** Textos salvos da sessao anterior. */
   setTexts(texts: CanvasText[]): void {
     for (const text of texts) this.addText(text);
+  }
+
+  /**
+   * Passa a mostrar os textos e grupos de outro workspace, com a vista dele.
+   * `view` nulo = origem em 100%.
+   */
+  setWorkspace(workspaceId: string, view: CanvasView | null): void {
+    this.workspaceId = workspaceId;
+    for (const item of this.texts.values()) item.element.hidden = item.workspaceId !== workspaceId;
+    for (const item of this.frames.values()) item.element.hidden = item.workspaceId !== workspaceId;
+    this.setView(view ?? { x: 0, y: 0, zoom: 1 }, false);
+    this.render();
+  }
+
+  /** Remove da tela (sem apagar do disco: o main ja apagou) tudo de um workspace. */
+  forgetWorkspace(workspaceId: string): void {
+    for (const [id, item] of this.texts) {
+      if (item.workspaceId !== workspaceId) continue;
+      this.texts.delete(id);
+      item.dispose();
+    }
+    for (const [id, item] of this.frames) {
+      if (item.workspaceId !== workspaceId) continue;
+      this.frames.delete(id);
+      item.dispose();
+    }
   }
 
   /** Molduras salvas da sessao anterior. */
@@ -207,6 +235,7 @@ export class CanvasBoard implements Board {
       onMoveStart: (moving, event) => this.moveGroup(moving, event),
     });
     this.frames.set(frame.id, item);
+    item.element.hidden = item.workspaceId !== this.workspaceId;
     this.frameLayer.append(item.element);
     item.place(this.view.zoom);
     return item;
@@ -230,7 +259,7 @@ export class CanvasBoard implements Board {
     const panes = membersOf(origin, this.panes
       .filter((pane) => pane.canvasRect && pane.id !== this.maximizedId)
       .map((pane) => ({ pane, rect: pane.canvasRect! })));
-    const texts = membersOf(origin, [...this.texts.values()].map((item) => ({ item, rect: item.worldRect, start: item.position })));
+    const texts = membersOf(origin, this.workspaceTexts().map((item) => ({ item, rect: item.worldRect, start: item.position })));
     const { zoom } = this.view;
     let delta = { x: 0, y: 0 };
     drag(event, 'grabbing', (dx, dy) => {
@@ -262,6 +291,7 @@ export class CanvasBoard implements Board {
       onRemove: (id) => this.removeText(id),
     });
     this.texts.set(text.id, item);
+    item.element.hidden = item.workspaceId !== this.workspaceId;
     this.textLayer.append(item.element);
     item.place(this.view.zoom);
     return item;
@@ -274,6 +304,10 @@ export class CanvasBoard implements Board {
     this.texts.delete(id);
     item.dispose();
     this.textStore.remove(id);
+  }
+
+  private workspaceTexts(): CanvasTextItem[] {
+    return [...this.texts.values()].filter((item) => item.workspaceId === this.workspaceId);
   }
 
   private isInView(rect: CanvasRect): boolean {
@@ -314,8 +348,8 @@ export class CanvasBoard implements Board {
 
   private fitAll(): void {
     const rects = this.panes.map((pane) => pane.canvasRect).filter((r): r is CanvasRect => r !== null);
-    for (const item of this.texts.values()) rects.push(item.worldRect);
-    for (const item of this.frames.values()) rects.push(item.rect);
+    for (const item of this.workspaceTexts()) rects.push(item.worldRect);
+    for (const item of this.frames.values()) if (item.workspaceId === this.workspaceId) rects.push(item.rect);
     this.setView(fitView(rects, this.element.clientWidth, this.element.clientHeight));
   }
 

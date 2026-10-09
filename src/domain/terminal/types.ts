@@ -32,6 +32,8 @@ export interface TerminalSpec {
   readonly claudeSession?: string | null;
   /** Worktree onde o terminal roda (o cwd e a pasta dele). Quem cria e o main. */
   readonly worktree?: WorktreeInfo | null;
+  /** Workspace a que pertence. Ausente = o padrao. */
+  readonly workspaceId?: string;
 }
 
 /** Projecao serializavel de uma sessao, enviada ao renderer. */
@@ -47,6 +49,7 @@ export interface TerminalSnapshot {
   readonly claudeSession: string | null;
   /** Worktree isolado do terminal; `null` = roda direto no diretorio. */
   readonly worktree: WorktreeInfo | null;
+  readonly workspaceId: string;
   readonly status: TerminalStatus;
   readonly exitCode: number | null;
   readonly createdAt: number;

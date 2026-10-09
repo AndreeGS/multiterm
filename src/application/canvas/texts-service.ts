@@ -20,8 +20,8 @@ export class TextsService {
     return [...this.texts.values()];
   }
 
-  create(x: number, y: number): CanvasText {
-    const text = createCanvasText(randomUUID(), x, y, Date.now());
+  create(x: number, y: number, workspaceId: string): CanvasText {
+    const text = createCanvasText(randomUUID(), x, y, workspaceId, Date.now());
     this.texts.set(text.id, text);
     this.scheduleSave();
     return text;
@@ -36,6 +36,17 @@ export class TextsService {
 
   remove(id: string): void {
     if (this.texts.delete(id)) this.scheduleSave();
+  }
+
+  /** Apaga tudo de um workspace que esta sendo removido. */
+  removeWorkspace(workspaceId: string): void {
+    let changed = false;
+    for (const [id, item] of this.texts) {
+      if (item.workspaceId !== workspaceId) continue;
+      this.texts.delete(id);
+      changed = true;
+    }
+    if (changed) this.scheduleSave();
   }
 
   /** Grava imediatamente (usado no encerramento do app). */

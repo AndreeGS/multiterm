@@ -179,6 +179,16 @@ export class TaskPane implements Panel {
     this.element.remove();
   }
 
+  get workspaceId(): string {
+    return this.list.workspaceId;
+  }
+
+  moveToWorkspace(workspaceId: string): void {
+    if (workspaceId === this.list.workspaceId) return;
+    this.list = { ...this.list, workspaceId };
+    this.api.updateTaskList(this.id, { workspaceId });
+  }
+
   get terminalId(): string | null {
     return this.list.terminalId;
   }

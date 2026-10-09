@@ -13,6 +13,7 @@ export type Shortcut =
   | { kind: 'settings' }
   | { kind: 'palette' }
   | { kind: 'next-attention' }
+  | { kind: 'workspaces' }
   | { kind: 'focus-index'; index: number }
   | { kind: 'focus-step'; delta: 1 | -1 };
 
@@ -44,6 +45,7 @@ export function matchShortcut(event: KeyboardEvent, inTerminal: boolean): Shortc
       case 'm': return { kind: 'maximize-pane' };
       case 'p': return { kind: 'palette' };
       case 'a': return { kind: 'next-attention' };
+      case 'o': return { kind: 'workspaces' };
       default: return null;
     }
   }

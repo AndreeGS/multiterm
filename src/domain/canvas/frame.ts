@@ -1,5 +1,6 @@
 import { parsePaneColor, type PaneColor } from '../workspace/colors.js';
 import type { CanvasRect } from '../workspace/layout.js';
+import { parseWorkspaceId } from '../workspace/workspace.js';
 
 /**
  * Moldura na area livre: um retangulo com titulo que agrupa paineis e textos.
@@ -14,6 +15,7 @@ export interface CanvasFrame {
   readonly height: number;
   readonly title: string;
   readonly color: PaneColor | null;
+  readonly workspaceId: string;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -31,7 +33,7 @@ export const MIN_FRAME_SIZE = { width: 200, height: 120 } as const;
 export const MAX_FRAME_TITLE = 60;
 export const DEFAULT_FRAME_TITLE = 'Grupo';
 
-export function createFrame(id: string, rect: CanvasRect, now: number): CanvasFrame {
+export function createFrame(id: string, rect: CanvasRect, workspaceId: string, now: number): CanvasFrame {
   return {
     id,
     x: rect.x,
@@ -40,6 +42,7 @@ export function createFrame(id: string, rect: CanvasRect, now: number): CanvasFr
     height: Math.max(MIN_FRAME_SIZE.height, rect.height),
     title: DEFAULT_FRAME_TITLE,
     color: null,
+    workspaceId,
     createdAt: now,
     updatedAt: now,
   };
@@ -80,6 +83,7 @@ export function parseFrames(raw: unknown): CanvasFrame[] {
       height: Math.max(MIN_FRAME_SIZE.height, height as number),
       title: (typeof input.title === 'string' && cleanTitle(input.title)) || DEFAULT_FRAME_TITLE,
       color: parsePaneColor(input.color),
+      workspaceId: parseWorkspaceId(input.workspaceId),
       createdAt,
       updatedAt: isFiniteNumber(input.updatedAt) ? input.updatedAt : createdAt,
     });
