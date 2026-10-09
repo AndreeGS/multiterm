@@ -61,7 +61,7 @@ describe('WorktreeService com git de verdade', () => {
     root = realpathSync(mkdtempSync(join(tmpdir(), 'multiterm-git-')));
     repo = join(root, 'api');
     execFileSync('git', ['init', '-q', '-b', 'main', repo]);
-    sh(['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'inicio'], repo);
+    sh(['-c', 'user.email=t@t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'inicio'], repo);
   });
   after(() => rmSync(root, { recursive: true, force: true }));
 

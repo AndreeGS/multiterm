@@ -222,7 +222,7 @@ function registerIpc(): void {
     let resolved: TerminalSpec = { ...spec, worktree: null, workspaceId: workspace.active().id };
     if (typeof worktreeBranch === 'string' && worktreeBranch.trim()) {
       const worktree = await worktrees.create(spec.cwd, worktreeBranch.trim());
-      resolved = { ...spec, cwd: worktree.path, worktree };
+      resolved = { ...resolved, cwd: worktree.path, worktree };
     }
     const snapshot = terminals.create(resolved);
     // O recente e o diretorio que voce escolheu, nao a pasta do worktree.
