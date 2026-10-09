@@ -13,14 +13,14 @@ const rect = (x: number, y: number, width: number, height: number) => ({ x, y, w
 
 describe('molduras', () => {
   it('createFrame respeita o tamanho minimo', () => {
-    const frame = createFrame('f', rect(0, 0, 10, 10), 1);
+    const frame = createFrame('f', rect(0, 0, 10, 10), 'w', 1);
     assert.equal(frame.width, MIN_FRAME_SIZE.width);
     assert.equal(frame.height, MIN_FRAME_SIZE.height);
     assert.equal(frame.title, DEFAULT_FRAME_TITLE);
   });
 
   it('patch: so campos validos; titulo vazio mantem; cor invalida vira null', () => {
-    const frame = { ...createFrame('f', rect(0, 0, 400, 300), 1), color: 'blue' as const };
+    const frame = { ...createFrame('f', rect(0, 0, 400, 300), 'w', 1), color: 'blue' as const };
     const next = applyFramePatch(frame, { x: Number.NaN, y: 5, width: 50, title: '  ', color: 'rosa' as never }, 2);
     assert.equal(next.x, 0);
     assert.equal(next.y, 5);

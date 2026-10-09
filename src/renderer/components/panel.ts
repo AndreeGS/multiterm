@@ -7,6 +7,8 @@ import type { Appearance } from '../theme.js';
  */
 export interface Panel {
   readonly id: string;
+  /** Workspace a que pertence: so aparece quando ele esta em uso. */
+  readonly workspaceId: string;
   /** Raiz do painel. Sobrevive a trocas de layout: so e reposicionada. */
   readonly element: HTMLElement;
   /** Cabecalho, usado como alca para arrastar na area livre. */

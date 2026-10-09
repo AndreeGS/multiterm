@@ -64,7 +64,8 @@ npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 | `Ctrl+Shift+P` | Paleta: ir para qualquer painel ou executar qualquer acao |
 | `Alt+1` … `Alt+9` | Ir direto para o painel N (segurar `Alt` mostra os numeros) |
 | `Ctrl+PageDown` / `Ctrl+PageUp` | Painel seguinte / anterior |
-| `Ctrl+Shift+A` | Proximo terminal aguardando voce |
+| `Ctrl+Shift+A` | Proximo terminal aguardando voce (troca de workspace se preciso) |
+| `Ctrl+Shift+O` | Workspaces: trocar, criar, renomear, apagar |
 | `Ctrl+Enter` (numa nota) | Envia a selecao ou a linha do cursor ao terminal vinculado |
 | `Ctrl+,` | Configuracoes (tema e tamanho da fonte) |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copiar / colar (o `Ctrl+C` puro continua sendo SIGINT) |
@@ -78,6 +79,35 @@ A paleta (`Ctrl+Shift+P`) lista os paineis abertos (os que pedem atencao com
 
 Botoes de cada painel: `■` interromper (Ctrl+C), `⟳` reiniciar o shell,
 `⤢` maximizar, `✕` fechar.
+
+## Workspaces
+
+Conjuntos nomeados de terminais, notas, tarefas, textos e grupos ("Projeto X",
+"Infra", "Estudos"), cada um com o **seu layout, as suas proporcoes e a sua
+vista da area livre**. O botao `▤ <nome>` na barra (ou `Ctrl+Shift+O`) abre a
+lista de workspaces:
+
+- clicar no nome troca para ele; o campo embaixo cria um novo (e ja troca);
+- `✎` renomeia ali mesmo, na linha (`Enter` salva, `Esc` cancela);
+- `🗑` pede confirmacao na propria linha, dizendo o que vai junto.
+
+- **Trocar nao fecha nada.** Os terminais dos outros workspaces continuam
+  rodando e avisando: o `● N aguardando` conta todos, o `▤` ganha um `●`
+  quando o aviso e de outro workspace, e percorrer os avisos (`Ctrl+Shift+A`)
+  troca de workspace sozinho;
+- tudo que voce cria nasce no workspace em uso. Para levar um painel para
+  outro: paleta, `Mover "<painel>" para outro workspace…`;
+- a paleta (`Ctrl+Shift+P`) tem `Workspace: <nome>` para trocar direto e
+  abre a lista de workspaces; ela tambem lista primeiro os paineis do workspace em uso e
+  depois os dos outros (com `▤ <workspace>`); escolher um troca para la.
+  `Alt+N` e `Ctrl+PageUp/PageDown` ficam no workspace em uso;
+- vincular nota/lista so oferece terminais do workspace em uso;
+- **apagar** um workspace fecha os terminais dele e apaga notas, listas,
+  textos e grupos. Da para apagar qualquer um, nao so o em uso; o ultimo nao
+  pode ser apagado.
+
+Quem ja usava o app antes dos workspaces cai num workspace **Principal** com
+tudo que tinha, no layout e na vista de antes.
 
 ## Comando inicial
 
@@ -409,10 +439,11 @@ tokens, mas nao custo, e sao listados no tooltip.
 Cinco arquivos em `app.getPath('userData')` (`~/.config/MultiTerm/` no Linux),
 todos com escrita atomica, sem banco de dados:
 
-- `config.json`: tamanho/posicao da janela, layout escolhido, proporcoes das
-  divisorias de cada grade, diretorios e comandos recentes, terminais abertos
-  (nome, diretorio, shell, comando inicial, cor, posicao), templates, a vista
-  da area livre e as configuracoes de aparencia;
+- `config.json`: tamanho/posicao da janela, os workspaces (nome, layout,
+  proporcoes das divisorias de cada grade, vista da area livre) e o em uso,
+  diretorios e comandos recentes, terminais abertos (nome, diretorio, shell,
+  comando inicial, cor, workspace, posicao), templates e as configuracoes de
+  aparencia;
 - `notes.json`: as notas (titulo, texto, posicao na area livre e terminal
   vinculado);
 - `texts.json`: os textos soltos da area livre (conteudo, posicao, tamanho);
@@ -420,7 +451,15 @@ todos com escrita atomica, sem banco de dados:
 - `tasks.json`: as listas de tarefas (titulo, itens, posicao na area livre e
   terminal vinculado).
 
+Notas, listas, textos e grupos guardam o workspace a que pertencem.
+
 O historico (scrollback) e os processos dos terminais nao sao persistidos.
+
+## Dialogos
+
+Confirmacoes e avisos sao modais do proprio app, nunca `window.confirm` ou
+`window.alert`: no Electron eles bloqueiam a janela e, no Linux, podem nem
+aparecer, deixando o app travado esperando um clique impossivel.
 
 ## Arquitetura
 
@@ -429,14 +468,15 @@ src/
   domain/          regras e tipos, sem Electron e sem node-pty
     terminal/      TerminalSession (ciclo de vida, atividade, replay), porta Pty,
                    comando inicial e deteccao de BEL/OSC de notificacao
-    workspace/     layouts (templates, divisorias) e formato do config.json
+    workspace/     workspaces, layouts (templates, divisorias), templates de
+                   terminal, cores e formato do config.json
     notes/         formato e validacao das notas
     canvas/        textos soltos e molduras (grupos) da area livre
     tasks/         formato e validacao das listas de tarefas
     git/           worktrees: porta Git, caminho, nome de branch, parse do porcelain
   application/     casos de uso (orquestram o dominio)
     terminal/      TerminalService — unico dono do conjunto de sessoes
-    workspace/     WorkspaceService — preferencias, com save debounced
+    workspace/     WorkspaceService — workspaces e preferencias, com save debounced
     notes/         NotesService — notas, com save debounced
     canvas/        TextsService e FramesService, com save debounced
     tasks/         TasksService — listas de tarefas, com save debounced

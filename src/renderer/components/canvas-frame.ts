@@ -53,6 +53,10 @@ export class CanvasFrameItem {
     return this.frame.id;
   }
 
+  get workspaceId(): string {
+    return this.frame.workspaceId;
+  }
+
   get rect(): CanvasRect {
     const { x, y, width, height } = this.frame;
     return { x, y, width, height };

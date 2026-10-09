@@ -14,8 +14,12 @@ import type { Settings } from '../domain/workspace/settings.js';
 import type { PaneColor } from '../domain/workspace/colors.js';
 import type { TemplateInput, TerminalTemplate } from '../domain/workspace/template.js';
 import type { GitInfo, WorktreeInfo } from '../domain/git/worktree.js';
+import type { Workspace, WorkspaceSummary } from '../domain/workspace/workspace.js';
 
 export interface BootstrapState {
+  readonly workspaces: WorkspaceSummary[];
+  /** Workspace em uso; layout, proporcoes e vista abaixo sao dele. */
+  readonly activeWorkspace: string;
   readonly layout: LayoutId;
   readonly layoutSizes: LayoutSizes;
   readonly notes: Note[];
@@ -80,6 +84,19 @@ export interface MultiTermApi {
   saveTemplate(input: TemplateInput): Promise<TerminalTemplate[]>;
   deleteTemplate(id: string): Promise<TerminalTemplate[]>;
 
+  /** Passa a usar outro workspace; devolve o layout e a vista dele. */
+  switchWorkspace(id: string): Promise<Workspace>;
+  /** `null` se ja ha o maximo de workspaces. Nao troca para ele. */
+  createWorkspace(name: string): Promise<Workspace | null>;
+  renameWorkspace(id: string, name: string): Promise<WorkspaceSummary[]>;
+  /**
+   * Apaga o workspace e tudo dele (fecha os terminais, apaga notas, tarefas,
+   * textos e grupos). Devolve o workspace em uso depois; `null` se recusou
+   * (era o ultimo).
+   */
+  deleteWorkspace(id: string): Promise<Workspace | null>;
+  moveTerminalToWorkspace(id: string, workspaceId: string): Promise<void>;
+
   /** Sobe de novo os terminais da sessao anterior, nas mesmas posicoes. */
   restoreSession(): Promise<RestoredSession>;
   discardSession(): Promise<void>;
@@ -135,6 +152,10 @@ export const CHANNELS = {
   setLayoutSizes: 'workspace:set-layout-sizes',
   setCanvasView: 'workspace:set-canvas-view',
   setSettings: 'workspace:set-settings',
+  workspaceSwitch: 'workspace:switch',
+  workspaceCreate: 'workspace:create',
+  workspaceRename: 'workspace:rename',
+  workspaceDelete: 'workspace:delete',
   sessionRestore: 'session:restore',
   sessionDiscard: 'session:discard',
 
@@ -170,6 +191,7 @@ export const CHANNELS = {
   restart: 'terminal:restart',
   rename: 'terminal:rename',
   setColor: 'terminal:set-color',
+  moveTerminal: 'terminal:move-workspace',
   interrupt: 'terminal:interrupt',
   acknowledge: 'terminal:acknowledge',
   write: 'terminal:write',

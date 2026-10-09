@@ -4,6 +4,8 @@ import { UsageBar } from './usage-bar.js';
 
 export interface ToolbarCallbacks {
   onNewTerminal(): void;
+  /** Trocar de workspace (ou criar/renomear/apagar). */
+  onWorkspaces(): void;
   /** Abrir um terminal a partir de um template. */
   onTemplates(): void;
   onNewNote(): void;
@@ -27,6 +29,7 @@ export class Toolbar {
   private readonly attentionBtn = document.createElement('button');
   private readonly sessionGroup = document.createElement('div');
   private readonly restoreBtn = document.createElement('button');
+  private readonly workspaceBtn = document.createElement('button');
 
   constructor(private readonly callbacks: ToolbarCallbacks, api: MultiTermApi) {
     this.element.className = 'toolbar';
@@ -34,6 +37,9 @@ export class Toolbar {
     const brand = document.createElement('span');
     brand.className = 'brand';
     brand.textContent = 'MultiTerm';
+
+    this.workspaceBtn.className = 'workspace-btn';
+    this.workspaceBtn.addEventListener('click', () => this.callbacks.onWorkspaces());
 
     const newBtn = document.createElement('button');
     newBtn.className = 'primary';
@@ -110,6 +116,7 @@ export class Toolbar {
 
     this.element.append(
       brand,
+      this.workspaceBtn,
       newGroup,
       noteBtn,
       tasksBtn,
@@ -127,6 +134,14 @@ export class Toolbar {
     for (const [id, btn] of this.layoutButtons) {
       btn.classList.toggle('active', id === layout);
     }
+  }
+
+  /** Workspace em uso; `elsewhere` = algum terminal de outro workspace aguarda voce. */
+  setWorkspace(name: string, elsewhere: boolean): void {
+    this.workspaceBtn.textContent = `▤ ${name}`;
+    this.workspaceBtn.classList.toggle('attention', elsewhere);
+    this.workspaceBtn.title = 'Workspace em uso: clique para trocar, criar, renomear ou apagar (Ctrl+Shift+O)' +
+      (elsewhere ? '\n● Ha terminal aguardando voce em outro workspace.' : '');
   }
 
   setAttention(count: number): void {

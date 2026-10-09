@@ -169,6 +169,10 @@ export class TerminalPane implements Panel {
     return this.snapshot.name;
   }
 
+  get workspaceId(): string {
+    return this.snapshot.workspaceId;
+  }
+
   get info(): TerminalSnapshot {
     return this.snapshot;
   }

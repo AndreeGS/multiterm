@@ -2,6 +2,7 @@ import { cleanItemText, type TaskItem, type TaskList } from '../../domain/tasks/
 import type { CanvasRect } from '../../domain/workspace/layout.js';
 import type { MultiTermApi } from '../../shared/contract.js';
 import type { Appearance } from '../theme.js';
+import { openConfirm } from './dialogs.js';
 import {
   beginRename,
   button,
@@ -86,7 +87,7 @@ export class TaskPane implements Panel {
     renderLinkChip(this.chip, null);
 
     const actions = el('div', 'pane-actions');
-    this.clearBtn = button('⌫', 'Apagar as tarefas concluidas', () => this.clearDone());
+    this.clearBtn = button('⌫', 'Apagar as tarefas concluidas', () => void this.clearDone());
     this.maximizeBtn = button('⤢', 'Maximizar / restaurar', () => this.callbacks.onMaximize(this.id));
     actions.append(
       this.clearBtn,
@@ -179,6 +180,16 @@ export class TaskPane implements Panel {
     this.element.remove();
   }
 
+  get workspaceId(): string {
+    return this.list.workspaceId;
+  }
+
+  moveToWorkspace(workspaceId: string): void {
+    if (workspaceId === this.list.workspaceId) return;
+    this.list = { ...this.list, workspaceId };
+    this.api.updateTaskList(this.id, { workspaceId });
+  }
+
   get terminalId(): string | null {
     return this.list.terminalId;
   }
@@ -239,10 +250,11 @@ export class TaskPane implements Panel {
     this.commit(this.list.items.filter((item) => item.id !== id));
   }
 
-  private clearDone(): void {
+  private async clearDone(): Promise<void> {
     const done = this.list.items.filter((item) => item.done).length;
     if (done === 0) return;
-    if (!window.confirm(`Apagar ${done} ${done === 1 ? 'tarefa concluida' : 'tarefas concluidas'}?`)) return;
+    const title = `Apagar ${done} ${done === 1 ? 'tarefa concluida' : 'tarefas concluidas'}?`;
+    if (!await openConfirm({ title, confirmLabel: 'Apagar', danger: true })) return;
     this.commit(this.list.items.filter((item) => !item.done));
   }
 

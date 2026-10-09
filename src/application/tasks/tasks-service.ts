@@ -25,9 +25,9 @@ export class TasksService {
     return [...this.lists.values()];
   }
 
-  create(): TaskList {
+  create(workspaceId: string): TaskList {
     const title = this.lists.size === 0 ? 'Tarefas' : `Tarefas ${this.lists.size + 1}`;
-    const list = createTaskList(randomUUID(), title, Date.now());
+    const list = createTaskList(randomUUID(), title, workspaceId, Date.now());
     this.lists.set(list.id, list);
     this.scheduleSave();
     return list;
@@ -42,6 +42,17 @@ export class TasksService {
 
   remove(id: string): void {
     if (this.lists.delete(id)) this.scheduleSave();
+  }
+
+  /** Apaga tudo de um workspace que esta sendo removido. */
+  removeWorkspace(workspaceId: string): void {
+    let changed = false;
+    for (const [id, item] of this.lists) {
+      if (item.workspaceId !== workspaceId) continue;
+      this.lists.delete(id);
+      changed = true;
+    }
+    if (changed) this.scheduleSave();
   }
 
   /** Grava imediatamente (usado no encerramento do app). */

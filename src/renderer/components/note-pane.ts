@@ -163,6 +163,16 @@ export class NotePane implements Panel {
     this.element.remove();
   }
 
+  get workspaceId(): string {
+    return this.note.workspaceId;
+  }
+
+  moveToWorkspace(workspaceId: string): void {
+    if (workspaceId === this.note.workspaceId) return;
+    this.note = { ...this.note, workspaceId };
+    this.api.updateNote(this.id, { workspaceId });
+  }
+
   get terminalId(): string | null {
     return this.note.terminalId;
   }

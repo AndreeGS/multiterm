@@ -1,5 +1,6 @@
 import { parseCanvasRect, type CanvasRect } from '../workspace/layout.js';
 import { parseTerminalId } from '../terminal/link.js';
+import { parseWorkspaceId } from '../workspace/workspace.js';
 
 /** Um item da lista. `doneAt` guarda quando foi concluido (null = pendente). */
 export interface TaskItem {
@@ -20,6 +21,7 @@ export interface TaskList {
   readonly rect: CanvasRect | null;
   /** Terminal vinculado: recebe as tarefas enviadas com ▶. `null` = nenhum. */
   readonly terminalId: string | null;
+  readonly workspaceId: string;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -30,13 +32,15 @@ export interface TaskListPatch {
   items?: TaskItem[];
   rect?: CanvasRect | null;
   terminalId?: string | null;
+  /** Mover para outro workspace (o main confere que ele existe). */
+  workspaceId?: string;
 }
 
 export const MAX_TITLE_LENGTH = 80;
 export const MAX_ITEM_LENGTH = 500;
 
-export function createTaskList(id: string, title: string, now: number): TaskList {
-  return { id, title: cleanTitle(title) || 'Tarefas', items: [], rect: null, terminalId: null, createdAt: now, updatedAt: now };
+export function createTaskList(id: string, title: string, workspaceId: string, now: number): TaskList {
+  return { id, title: cleanTitle(title) || 'Tarefas', items: [], rect: null, terminalId: null, workspaceId, createdAt: now, updatedAt: now };
 }
 
 /** Aplica so os campos validos do patch; titulo vazio mantem o anterior. */
@@ -48,6 +52,7 @@ export function applyTaskListPatch(list: TaskList, patch: TaskListPatch, now: nu
     items: Array.isArray(patch.items) ? parseItems(patch.items) : list.items,
     rect: patch.rect === undefined ? list.rect : parseCanvasRect(patch.rect),
     terminalId: patch.terminalId === undefined ? list.terminalId : parseTerminalId(patch.terminalId),
+    workspaceId: patch.workspaceId === undefined ? list.workspaceId : parseWorkspaceId(patch.workspaceId),
     updatedAt: now,
   };
 }
@@ -68,6 +73,7 @@ export function parseTaskLists(raw: unknown): TaskList[] {
       items: Array.isArray(input.items) ? parseItems(input.items) : [],
       rect: parseCanvasRect(input.rect),
       terminalId: parseTerminalId(input.terminalId),
+      workspaceId: parseWorkspaceId(input.workspaceId),
       createdAt,
       updatedAt: isTimestamp(input.updatedAt) ? input.updatedAt : createdAt,
     });
