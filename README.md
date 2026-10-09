@@ -84,8 +84,12 @@ Botoes de cada painel: `■` interromper (Ctrl+C), `⟳` reiniciar o shell,
 
 Conjuntos nomeados de terminais, notas, tarefas, textos e grupos ("Projeto X",
 "Infra", "Estudos"), cada um com o **seu layout, as suas proporcoes e a sua
-vista da area livre**. O botao `▤ <nome>` na barra (ou `Ctrl+Shift+O`) troca,
-cria, renomeia e apaga.
+vista da area livre**. O botao `▤ <nome>` na barra (ou `Ctrl+Shift+O`) abre a
+lista de workspaces:
+
+- clicar no nome troca para ele; o campo embaixo cria um novo (e ja troca);
+- `✎` renomeia ali mesmo, na linha (`Enter` salva, `Esc` cancela);
+- `🗑` pede confirmacao na propria linha, dizendo o que vai junto.
 
 - **Trocar nao fecha nada.** Os terminais dos outros workspaces continuam
   rodando e avisando: o `● N aguardando` conta todos, o `▤` ganha um `●`
@@ -93,13 +97,14 @@ cria, renomeia e apaga.
   troca de workspace sozinho;
 - tudo que voce cria nasce no workspace em uso. Para levar um painel para
   outro: paleta, `Mover "<painel>" para outro workspace…`;
-- a paleta (`Ctrl+Shift+P`) lista primeiro os paineis do workspace em uso e
+- a paleta (`Ctrl+Shift+P`) tem `Workspace: <nome>` para trocar direto e
+  abre a lista de workspaces; ela tambem lista primeiro os paineis do workspace em uso e
   depois os dos outros (com `▤ <workspace>`); escolher um troca para la.
   `Alt+N` e `Ctrl+PageUp/PageDown` ficam no workspace em uso;
 - vincular nota/lista so oferece terminais do workspace em uso;
-- **apagar** um workspace pede confirmacao dizendo o que vai junto: fecha os
-  terminais dele e apaga notas, listas, textos e grupos. O ultimo nao pode ser
-  apagado.
+- **apagar** um workspace fecha os terminais dele e apaga notas, listas,
+  textos e grupos. Da para apagar qualquer um, nao so o em uso; o ultimo nao
+  pode ser apagado.
 
 Quem ja usava o app antes dos workspaces cai num workspace **Principal** com
 tudo que tinha, no layout e na vista de antes.
@@ -449,6 +454,12 @@ todos com escrita atomica, sem banco de dados:
 Notas, listas, textos e grupos guardam o workspace a que pertencem.
 
 O historico (scrollback) e os processos dos terminais nao sao persistidos.
+
+## Dialogos
+
+Confirmacoes e avisos sao modais do proprio app, nunca `window.confirm` ou
+`window.alert`: no Electron eles bloqueiam a janela e, no Linux, podem nem
+aparecer, deixando o app travado esperando um clique impossivel.
 
 ## Arquitetura
 

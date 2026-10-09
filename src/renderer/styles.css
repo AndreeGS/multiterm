@@ -1031,7 +1031,6 @@ button.swatch.selected:hover:not(:disabled) { border-color: var(--fg); }
 .canvas-frame-resize:hover { opacity: 1; }
 
 /* ---------- workspaces ---------- */
-.modal.prompt { width: min(420px, calc(90vw / var(--ui-zoom))); }
 .workspace-btn {
   max-width: 220px;
   overflow: hidden;
@@ -1039,3 +1038,43 @@ button.swatch.selected:hover:not(:disabled) { border-color: var(--fg); }
   white-space: nowrap;
 }
 .workspace-btn.attention::after { content: ' ●'; color: var(--idle); }
+
+/* ---------- confirmacao e aviso (no lugar dos dialogos nativos) ---------- */
+.dialog-overlay { z-index: 200; }
+.modal.dialog { width: min(440px, calc(90vw / var(--ui-zoom))); gap: 12px; }
+.dialog-message { margin: 0; white-space: pre-line; color: var(--fg-dim); line-height: 1.5; }
+button.primary.danger,
+button.primary.danger:hover:not(:disabled) { background: var(--error); border-color: var(--error); color: #fff; }
+
+/* ---------- gerenciador de workspaces ---------- */
+.modal.workspaces { width: min(560px, calc(90vw / var(--ui-zoom))); gap: 10px; }
+.workspace-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; max-height: 50vh; overflow-y: auto; }
+.workspace-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--radius);
+  min-height: 34px;
+}
+.workspace-row:hover { background: var(--hover-bg); }
+.workspace-row.active { box-shadow: inset 3px 0 0 var(--accent); }
+.workspace-row .workspace-name {
+  flex: none;
+  max-width: 45%;
+  border-color: transparent;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.workspace-detail { flex: 1; font-size: 11px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.workspace-detail.waiting { color: var(--idle); }
+.workspace-row .icon-btn { border-color: transparent; padding: 2px 7px; color: var(--fg-dim); }
+.workspace-row .icon-btn:hover:not(:disabled) { color: var(--fg); }
+.workspace-row .icon-btn.danger:hover:not(:disabled) { color: var(--error); }
+.workspace-rename, .workspace-create { display: flex; gap: 6px; flex: 1; }
+.workspace-rename input, .workspace-create input { flex: 1; }
+.workspace-confirm { flex: 1; font-size: 12px; }
+.workspace-create { padding-top: 8px; border-top: 1px solid var(--border); }

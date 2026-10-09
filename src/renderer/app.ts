@@ -3,7 +3,7 @@ import type { TaskList } from '../domain/tasks/task-list.js';
 import type { TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js';
 import type { TerminalTemplate } from '../domain/workspace/template.js';
 import type { WorktreeInfo } from '../domain/git/worktree.js';
-import type { Workspace, WorkspaceSummary } from '../domain/workspace/workspace.js';
+import { MAX_WORKSPACES, type Workspace, type WorkspaceSummary } from '../domain/workspace/workspace.js';
 import type { UsageSummary, UsageTotals } from '../domain/usage/types.js';
 import { capacity, isGridLayout, layoutFor, type CanvasRect, type LayoutId } from '../domain/workspace/layout.js';
 import type { SavedTerminal } from '../domain/workspace/config.js';
@@ -17,7 +17,8 @@ import { TerminalGrid } from './components/grid.js';
 import { openNewTerminalDialog } from './components/new-terminal-dialog.js';
 import { NotePane } from './components/note-pane.js';
 import { openSettingsDialog } from './components/settings-dialog.js';
-import { openPrompt } from './components/prompt-dialog.js';
+import { openAlert, openConfirm } from './components/dialogs.js';
+import { openWorkspaceDialog, type WorkspaceAction, type WorkspaceRow } from './components/workspace-dialog.js';
 import type { Board, LinkLabel, Panel } from './components/panel.js';
 import { TaskPane } from './components/task-pane.js';
 import { terminalPlace, TerminalPane } from './components/terminal-pane.js';
@@ -303,103 +304,81 @@ export class App {
     this.refreshWorkspaceUi();
   }
 
-  /** Paleta dos workspaces: trocar, e as acoes sobre eles. */
+  /** Gerenciador de workspaces: trocar, criar, e ✎/🗑 em cada um. */
   private async openWorkspaces(): Promise<void> {
     if (this.dialogOpen) return;
-    const items: PaletteItem[] = this.workspaces.map((workspace) => {
+    const rows: WorkspaceRow[] = this.workspaces.map((workspace) => {
       const ids = this.order.filter((id) => this.panes.get(id)?.workspaceId === workspace.id);
-      const terminals = ids.filter((id) => this.panes.get(id) instanceof TerminalPane).length;
-      const waiting = ids.filter((id) => this.attention.has(id)).length;
       return {
-        label: workspace.name,
-        detail: [
-          workspace.id === this.activeWorkspace ? 'em uso' : '',
-          `${terminals} terminal${terminals === 1 ? '' : 'is'}`,
-          waiting ? `${waiting} aguardando` : '',
-        ].filter(Boolean).join(' · '),
-        attention: waiting > 0,
-        run: () => void this.switchWorkspace(workspace.id),
+        id: workspace.id,
+        name: workspace.name,
+        active: workspace.id === this.activeWorkspace,
+        terminals: ids.filter((id) => this.panes.get(id) instanceof TerminalPane).length,
+        panes: ids.length,
+        waiting: ids.filter((id) => this.attention.has(id)).length,
       };
     });
-    items.push(...this.workspaceActions());
     this.dialogOpen = true;
-    let chosen: PaletteItem | null = null;
+    let action: WorkspaceAction | null;
     try {
-      chosen = await openPalette(items, 'Trocar de workspace…');
+      action = await openWorkspaceDialog(rows, this.workspaces.length < MAX_WORKSPACES);
     } finally {
       this.dialogOpen = false;
     }
-    chosen?.run();
+    switch (action?.kind) {
+      case 'switch': return this.switchWorkspace(action.id);
+      case 'create': return this.createWorkspace(action.name);
+      case 'rename': return this.renameWorkspace(action.id, action.name);
+      case 'delete': return this.deleteWorkspace(action.id);
+      default:
+        if (this.focusedId) this.panes.get(this.focusedId)?.focus();
+    }
   }
 
-  /** Criar, renomear, apagar e mover para outro: entram na paleta geral tambem. */
+  /** O que a paleta geral oferece sobre workspaces. */
   private workspaceActions(): PaletteItem[] {
-    const active = this.workspaceName(this.activeWorkspace);
     const items: PaletteItem[] = [
-      { label: 'Novo workspace…', hint: 'Ctrl+Shift+O', run: () => void this.createWorkspace() },
-      { label: `Renomear workspace "${active}"…`, run: () => void this.renameWorkspace() },
+      { label: 'Workspaces: trocar, criar, renomear, apagar…', hint: 'Ctrl+Shift+O', run: () => void this.openWorkspaces() },
     ];
-    if (this.workspaces.length > 1) {
-      items.push({ label: `Apagar workspace "${active}"…`, run: () => void this.deleteWorkspace() });
-      const focused = this.focusedId ? this.panes.get(this.focusedId) : undefined;
-      if (focused) {
-        items.push({ label: `Mover "${paneLabel(focused)}" para outro workspace…`, run: () => void this.movePane(focused) });
-      }
+    const focused = this.focusedId ? this.panes.get(this.focusedId) : undefined;
+    if (focused && this.workspaces.length > 1) {
+      items.push({ label: `Mover "${paneLabel(focused)}" para outro workspace…`, run: () => void this.movePane(focused) });
     }
     return items;
   }
 
-  private async createWorkspace(): Promise<void> {
-    if (this.dialogOpen) return;
-    this.dialogOpen = true;
-    let name: string | null;
-    try {
-      name = await openPrompt('Novo workspace', '', 'ex.: Projeto X, Infra, Estudos');
-    } finally {
-      this.dialogOpen = false;
-    }
-    if (!name) return;
+  private async createWorkspace(name: string): Promise<void> {
     const workspace = await this.api.createWorkspace(name);
     if (!workspace) {
-      window.alert('Limite de workspaces atingido. Apague um antes de criar outro.');
+      await openAlert('Limite de workspaces atingido', 'Apague um workspace antes de criar outro.');
       return;
     }
     this.workspaces = [...this.workspaces, { id: workspace.id, name: workspace.name }];
     await this.switchWorkspace(workspace.id);
   }
 
-  private async renameWorkspace(): Promise<void> {
-    if (this.dialogOpen) return;
-    this.dialogOpen = true;
-    let name: string | null;
-    try {
-      name = await openPrompt('Renomear workspace', this.workspaceName(this.activeWorkspace));
-    } finally {
-      this.dialogOpen = false;
-    }
-    if (!name) return;
-    this.workspaces = await this.api.renameWorkspace(this.activeWorkspace, name);
+  private async renameWorkspace(id: string, name: string): Promise<void> {
+    this.workspaces = await this.api.renameWorkspace(id, name);
     this.refreshWorkspaceUi();
   }
 
-  /** Apaga o workspace em uso e tudo dele, depois de dizer o que vai junto. */
-  private async deleteWorkspace(): Promise<void> {
-    const id = this.activeWorkspace;
+  /**
+   * Apaga um workspace e tudo dele (a confirmacao ja foi feita na lista). Se
+   * era o em uso, o main passa a usar outro e a tela vai junto.
+   */
+  private async deleteWorkspace(id: string): Promise<void> {
+    const wasActive = id === this.activeWorkspace;
     const panes = this.order.map((paneId) => this.panes.get(paneId)!).filter((pane) => pane.workspaceId === id);
-    const terminals = panes.filter((pane) => pane instanceof TerminalPane).length;
-    const others = panes.length - terminals;
-    const what = [
-      terminals ? `${terminals} terminal${terminals === 1 ? '' : 'is'} (os processos sao encerrados)` : '',
-      others ? `${others} nota${others === 1 ? '' : 's'}/lista${others === 1 ? '' : 's'}` : '',
-      'os textos e grupos da area livre',
-    ].filter(Boolean).join(', ');
-    if (!window.confirm(`Apagar o workspace "${this.workspaceName(id)}"?\n\nVai junto: ${what}. Nao da para desfazer.`)) return;
     const next = await this.api.deleteWorkspace(id);
     if (!next) return;
     // Terminais saem pelo evento de fechamento; notas e listas o main ja apagou.
     for (const pane of panes) if (!(pane instanceof TerminalPane)) this.removePane(pane.id);
     this.canvas.forgetWorkspace(id);
     this.workspaces = this.workspaces.filter((w) => w.id !== id);
+    if (!wasActive) {
+      this.refreshWorkspaceUi();
+      return;
+    }
     this.applyWorkspace(next);
     const first = this.visibleIds()[0];
     if (first) this.goTo(first);
@@ -523,7 +502,7 @@ export class App {
     if (!target) {
       const terminals = this.terminalPanes();
       if (terminals.length === 0) {
-        window.alert('Nenhum terminal aberto para receber o texto.');
+        await openAlert('Nenhum terminal aberto', 'Abra um terminal neste workspace para receber o texto.');
         return null;
       }
       target = await this.pickTerminal(terminals, `Enviar para (e vincular "${paneLabel(source)}" a) qual terminal?`);
@@ -547,7 +526,7 @@ export class App {
     }));
     if (current) items.push({ label: 'Remover vinculo', run: () => this.setLink(sourceId, null) });
     if (items.length === 0) {
-      window.alert('Nenhum terminal aberto para vincular.');
+      await openAlert('Nenhum terminal aberto', 'Abra um terminal neste workspace para vincular.');
       return;
     }
     this.dialogOpen = true;
@@ -727,7 +706,7 @@ export class App {
     try {
       snapshot = await this.api.createTerminal(spec, worktreeBranch ?? undefined);
     } catch (error) {
-      window.alert(`Nao foi possivel abrir o terminal:\n${ipcErrorMessage(error)}`);
+      await openAlert('Nao foi possivel abrir o terminal', ipcErrorMessage(error));
       return null;
     }
     this.rememberDir(snapshot.worktree ? snapshot.worktree.repo : snapshot.cwd);
@@ -772,7 +751,7 @@ export class App {
   }
 
   private async deleteTemplate(template: TerminalTemplate): Promise<void> {
-    if (!window.confirm(`Apagar o template "${template.name}"?`)) return;
+    if (!await openConfirm({ title: `Apagar o template "${template.name}"?`, confirmLabel: 'Apagar', danger: true })) return;
     this.templates = await this.api.deleteTemplate(template.id);
   }
 
@@ -810,6 +789,12 @@ export class App {
 
   /** Exibe um painel recem-criado e da foco a ele. */
   private showNew(id: string): void {
+    // Nasceu fora do workspace em uso (nao deveria): vai ate ele em vez de sumir.
+    const pane = this.panes.get(id);
+    if (pane && pane.workspaceId !== this.activeWorkspace) {
+      void this.switchWorkspace(pane.workspaceId, id);
+      return;
+    }
     // Cresce a grade automaticamente ate caber, sem passar do escolhido.
     const needed = layoutFor(this.visibleIds().length);
     if (isGridLayout(this.layout) && capacity(needed) > capacity(this.layout)) this.setLayout(needed);
@@ -822,13 +807,23 @@ export class App {
   private async closePane(id: string): Promise<void> {
     const pane = this.panes.get(id);
     if (pane instanceof NotePane) {
-      if (!pane.isEmpty && !window.confirm('Fechar esta nota apaga o conteudo dela. Continuar?')) return;
+      if (!pane.isEmpty && !await openConfirm({
+        title: 'Fechar esta nota?',
+        message: 'Fechar apaga o conteudo dela.',
+        confirmLabel: 'Fechar e apagar',
+        danger: true,
+      })) return;
       await this.api.deleteNote(id);
       this.removePane(id);
       return;
     }
     if (pane instanceof TaskPane) {
-      if (!pane.isEmpty && !window.confirm('Fechar esta lista apaga todas as tarefas dela. Continuar?')) return;
+      if (!pane.isEmpty && !await openConfirm({
+        title: 'Fechar esta lista?',
+        message: 'Fechar apaga todas as tarefas dela.',
+        confirmLabel: 'Fechar e apagar',
+        danger: true,
+      })) return;
       await this.api.deleteTaskList(id);
       this.removePane(id);
       return;
@@ -851,14 +846,23 @@ export class App {
       return; // pasta ja removida por fora
     }
     const where = `${worktree.branch} (${shortenPath(worktree.path)})`;
-    const question = dirty
-      ? `O worktree ${where} tem mudancas NAO commitadas.\n\nRemover a pasta mesmo assim? As mudancas serao perdidas; a branch continua no repositorio.`
-      : `Remover tambem o worktree ${where}?\n\nA pasta e apagada; a branch continua no repositorio.`;
-    if (!window.confirm(question)) return;
+    const remove = await openConfirm(dirty
+      ? {
+        title: 'Remover o worktree com mudancas nao commitadas?',
+        message: `${where} tem mudancas NAO commitadas, que serao perdidas.\nA branch continua no repositorio.`,
+        confirmLabel: 'Remover e perder as mudancas',
+        danger: true,
+      }
+      : {
+        title: 'Remover tambem o worktree?',
+        message: `${where}: a pasta e apagada; a branch continua no repositorio.`,
+        confirmLabel: 'Remover',
+      });
+    if (!remove) return;
     try {
       await this.api.removeWorktree(worktree, dirty);
     } catch (error) {
-      window.alert(`Nao foi possivel remover o worktree:\n${ipcErrorMessage(error)}`);
+      await openAlert('Nao foi possivel remover o worktree', ipcErrorMessage(error));
     }
   }
 
