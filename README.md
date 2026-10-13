@@ -514,3 +514,7 @@ Regras que mantem o acoplamento baixo:
   (`IPty.process` no Unix) em vez de so o fluxo de bytes.
 - Confirmacao ao fechar um terminal com processo em execucao.
 - Busca no scrollback (`@xterm/addon-search`).
+
+## Licença
+
+Distribuído sob a licença MIT. Veja [LICENSE](LICENSE).

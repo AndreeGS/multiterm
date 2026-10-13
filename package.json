@@ -2,6 +2,7 @@
   "name": "multiterm",
   "version": "0.1.0",
   "description": "Central visual para executar e acompanhar varios terminais/agentes simultaneamente",
+  "license": "MIT",
   "main": "dist/main/main.js",
   "private": true,
   "scripts": {
