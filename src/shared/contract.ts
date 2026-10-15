@@ -74,6 +74,8 @@ export interface MultiTermApi {
   renameTerminal(id: string, name: string): Promise<void>;
   setTerminalColor(id: string, color: PaneColor | null): Promise<void>;
   interruptTerminal(id: string): Promise<void>;
+  /** Abre um link no navegador do sistema (so http, https e mailto). */
+  openExternal(url: string): void;
   /** Marca que voce ja viu este terminal (limpa o pedido de atencao). */
   acknowledgeTerminal(id: string): void;
   writeTerminal(id: string, data: string): void;
@@ -203,6 +205,7 @@ export const CHANNELS = {
   setColor: 'terminal:set-color',
   moveTerminal: 'terminal:move-workspace',
   interrupt: 'terminal:interrupt',
+  openExternal: 'app:open-external',
   acknowledge: 'terminal:acknowledge',
   write: 'terminal:write',
   resize: 'terminal:resize',

@@ -4,6 +4,7 @@ import {
   dialog,
   ipcMain,
   powerMonitor,
+  screen,
   session,
   shell,
   type IpcMainEvent,
@@ -41,6 +42,7 @@ import {
   type CanvasRect,
 } from '../domain/workspace/layout.js';
 import { parsePaneColor } from '../domain/workspace/colors.js';
+import { visibleBounds } from '../domain/workspace/config.js';
 import { parseSettings, WINDOW_BACKGROUND } from '../domain/workspace/settings.js';
 import { parseTemplate } from '../domain/workspace/template.js';
 import { summarize } from '../domain/workspace/workspace.js';
@@ -85,7 +87,8 @@ function send(channel: string, ...args: unknown[]): void {
 }
 
 function createWindow(): void {
-  const { window, settings } = workspace.current();
+  const { settings } = workspace.current();
+  const window = visibleBounds(workspace.current().window, screen.getAllDisplays().map((display) => display.workArea));
 
   mainWindow = new BrowserWindow({
     x: window.x,
@@ -105,7 +108,10 @@ function createWindow(): void {
     },
   });
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  mainWindow.once('ready-to-show', () => {
+    if (window.maximized) mainWindow?.maximize();
+    mainWindow?.show();
+  });
   mainWindow.on('close', persistBounds);
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -120,10 +126,25 @@ function createWindow(): void {
   // carregaria outra pagina com acesso ao preload (e a criar terminais).
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault());
   mainWindow.webContents.on('will-redirect', (event) => event.preventDefault());
+  // Renderer caiu (GPU, memoria): as sessoes seguem vivas no main e o replay
+  // reconstroi as telas. Limite para nao entrar em loop se ele cair ao subir.
+  const crashes: number[] = [];
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    if (details.reason === 'clean-exit') return;
+    console.error('[main] renderer caiu:', details.reason);
+    const now = Date.now();
+    crashes.push(now);
+    while (crashes.length > 0 && now - crashes[0]! > RELOAD_WINDOW_MS) crashes.shift();
+    if (crashes.length <= MAX_RELOADS) mainWindow?.reload();
+  });
 
   void mainWindow.loadFile(RENDERER_PAGE);
   if (process.argv.includes('--dev')) mainWindow.webContents.openDevTools({ mode: 'detach' });
 }
+
+/** Recarregamentos automaticos permitidos por janela de tempo, se o renderer cair. */
+const MAX_RELOADS = 3;
+const RELOAD_WINDOW_MS = 60_000;
 
 /** Pagina do renderer: o unico remetente aceito no IPC. */
 const RENDERER_PAGE = join(__dirname, '../renderer/index.html');
@@ -155,7 +176,7 @@ const ALLOWED_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-writ
 function persistBounds(): void {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) return;
   const { x, y, width, height } = mainWindow.getNormalBounds();
-  workspace.setWindowBounds({ x, y, width, height });
+  workspace.setWindowBounds({ x, y, width, height, ...(mainWindow.isMaximized() ? { maximized: true } : {}) });
 }
 
 /** Espelha os terminais abertos no config, para reabri-los na proxima vez. */
@@ -267,11 +288,14 @@ function registerIpc(): void {
     if (!spec) throw new Error('Terminal invalido.');
     // Worktree e workspace do spec so podem vir daqui: o renderer pede o
     // worktree pela branch, e o terminal nasce no workspace em uso.
-    let resolved: TerminalSpec = { ...spec, worktree: null, workspaceId: workspace.active().id };
+    let resolved: TerminalSpec = { ...spec, worktree: null };
     if (typeof worktreeBranch === 'string' && worktreeBranch.trim()) {
       const worktree = await worktrees.create(spec.cwd, worktreeBranch.trim());
       resolved = { ...resolved, cwd: worktree.path, worktree };
     }
+    // Lido depois do git: trocar de workspace enquanto o worktree e criado
+    // poe o terminal no workspace em que voce esta agora.
+    resolved = { ...resolved, workspaceId: workspace.active().id };
     const snapshot = terminals.create(resolved);
     // O recente e o diretorio que voce escolheu, nao a pasta do worktree.
     workspace.rememberDir(snapshot.worktree ? snapshot.worktree.repo : snapshot.cwd);
@@ -340,6 +364,9 @@ function registerIpc(): void {
     if (parsed) terminalRects.set(id, parsed);
     else terminalRects.delete(id);
     persistTerminals();
+  });
+  on(CHANNELS.openExternal, (_event, url: unknown) => {
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
   });
   handle(CHANNELS.interrupt, (_event, id: string) => terminals.interrupt(id));
   handle(CHANNELS.replay, (_event, id: string) => {

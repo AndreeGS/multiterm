@@ -6,6 +6,7 @@ import {
   MAX_RECENT_DIRS,
   parseConfig,
   withRecentCommand,
+  visibleBounds,
   withRecentDir,
 } from '../../domain/workspace/config.js';
 import {
@@ -152,5 +153,24 @@ describe('config', () => {
     assert.equal(settings.fontSize, FONT_SIZE_MAX);
     assert.equal(settings.uiScale, 1);
     assert.equal(settings.showLinks, false);
+  });
+});
+
+describe('posicao da janela', () => {
+  const screen = { x: 0, y: 0, width: 1920, height: 1080 };
+
+  it('mantem a posicao quando a barra de titulo esta numa tela', () => {
+    const bounds = { x: 100, y: 50, width: 1200, height: 800 };
+    assert.deepEqual(visibleBounds(bounds, [screen]), bounds);
+  });
+
+  it('monitor desconectado: descarta x/y e mantem tamanho e maximizado', () => {
+    const bounds = { x: 2500, y: 100, width: 1200, height: 800, maximized: true };
+    assert.deepEqual(visibleBounds(bounds, [screen]), { width: 1200, height: 800, maximized: true });
+  });
+
+  it('segunda tela a esquerda conta', () => {
+    const bounds = { x: -1500, y: 0, width: 1200, height: 800 };
+    assert.deepEqual(visibleBounds(bounds, [screen, { x: -1920, y: 0, width: 1920, height: 1080 }]), bounds);
   });
 });
