@@ -117,9 +117,13 @@ export class TerminalPane implements Panel {
       allowProposedApi: true,
       theme: TERMINAL_THEMES[appearance.theme],
       minimumContrastRatio: MIN_CONTRAST[appearance.theme],
+      // Links OSC 8 (hyperlinks que o programa imprime). Sem isto o xterm faz
+      // window.open() sem URL e nada abre.
+      linkHandler: { activate: (_event, uri) => this.api.openExternal(uri) },
     });
     this.term.loadAddon(this.fit);
-    this.term.loadAddon(new WebLinksAddon());
+    // URLs soltas no texto: o handler padrao tambem abriria uma janela vazia.
+    this.term.loadAddon(new WebLinksAddon((_event, uri) => this.api.openExternal(uri)));
     this.term.open(body);
 
     this.term.onData((data) => this.api.writeTerminal(this.id, data));

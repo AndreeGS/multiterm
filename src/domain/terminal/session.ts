@@ -134,8 +134,12 @@ export class TerminalSession {
       return;
     }
 
-    this.pty.onData((chunk) => {
-      if (this.disposed) return;
+    // Os eventos sao deste pty. Depois de um restart, o antigo ainda pode
+    // mandar dados ou o exit: entrariam na sessao nova (e o comando inicial
+    // seria digitado antes do rc do shell novo carregar).
+    const proc = this.pty;
+    proc.onData((chunk) => {
+      if (this.disposed || this.pty !== proc) return;
       this.emitData(chunk);
       const signal = this.scanner.scan(chunk);
       this.markActive();
@@ -145,11 +149,12 @@ export class TerminalSession {
         // como se voce tivesse digitado. Nao arma o aviso de ocioso — um
         // agente recem-aberto esperando instrucao nao e novidade para ninguem.
         this.commandPending = false;
-        this.pty?.write(`${this.launch}\r`);
+        proc.write(`${this.launch}\r`);
       }
     });
 
-    this.pty.onExit((code) => {
+    proc.onExit((code) => {
+      if (this.pty !== proc) return;
       this.pty = null;
       this.clearIdleTimer();
       // O `exit` chega depois do dispose(): a sessao ja saiu do workspace e

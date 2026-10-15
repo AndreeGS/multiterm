@@ -22,6 +22,34 @@ export interface WindowBounds {
   y?: number;
   width: number;
   height: number;
+  maximized?: boolean;
+}
+
+export interface ScreenArea {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** Quanto da barra de titulo precisa estar numa tela para a janela ser alcancavel. */
+const MIN_VISIBLE = { width: 100, height: 40 };
+
+/**
+ * Posicao salva so vale se a barra de titulo cair em alguma tela: o monitor
+ * pode ter sido desconectado. Senao a janela abre centralizada (sem x/y).
+ */
+export function visibleBounds(bounds: WindowBounds, areas: readonly ScreenArea[]): WindowBounds {
+  const { x, y } = bounds;
+  if (x === undefined || y === undefined) return bounds;
+  const reachable = areas.some((area) => {
+    const width = Math.min(x + bounds.width, area.x + area.width) - Math.max(x, area.x);
+    const height = Math.min(y + MIN_VISIBLE.height, area.y + area.height) - Math.max(y, area.y);
+    return width >= MIN_VISIBLE.width && height >= MIN_VISIBLE.height;
+  });
+  if (reachable) return bounds;
+  const { x: _x, y: _y, ...rest } = bounds;
+  return rest;
 }
 
 /**
@@ -93,6 +121,7 @@ export function parseConfig(raw: unknown): AppConfig {
     if (isFinitePositive(window.height)) base.window.height = window.height;
     if (Number.isFinite(window.x)) base.window.x = window.x as number;
     if (Number.isFinite(window.y)) base.window.y = window.y as number;
+    if (window.maximized === true) base.window.maximized = true;
   }
 
   base.workspaces = parseWorkspaces(input);
