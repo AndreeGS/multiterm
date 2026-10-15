@@ -10,6 +10,10 @@ class NodePty implements Pty {
     return this.proc.pid;
   }
 
+  get process(): string {
+    return this.proc.process;
+  }
+
   write(data: string): void {
     this.proc.write(data);
   }
@@ -24,6 +28,14 @@ class NodePty implements Pty {
 
   kill(signal?: NodeJS.Signals): void {
     this.proc.kill(signal);
+  }
+
+  pause(): void {
+    this.proc.pause();
+  }
+
+  resume(): void {
+    this.proc.resume();
   }
 
   onData(listener: (chunk: string) => void): void {
@@ -49,7 +61,7 @@ export class NodePtyFactory implements PtyFactory {
       cols: size.cols,
       rows: size.rows,
       cwd,
-      env: env as Record<string, string>,
+      env,
       // Melhora o throughput de agentes que imprimem muito (Linux/macOS).
       useConpty: process.platform === 'win32' ? true : undefined,
     });

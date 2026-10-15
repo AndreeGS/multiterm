@@ -74,6 +74,12 @@ export interface MultiTermApi {
   renameTerminal(id: string, name: string): Promise<void>;
   setTerminalColor(id: string, color: PaneColor | null): Promise<void>;
   interruptTerminal(id: string): Promise<void>;
+  /** Programa rodando no terminal alem do shell (para confirmar ao fechar), ou `null`. */
+  busyProgram(id: string): Promise<string | null>;
+  /** O xterm desenhou `bytes` do output deste terminal (controle de fluxo). */
+  ackOutput(id: string, bytes: number): void;
+  /** Abre um link no navegador do sistema (so http, https e mailto). */
+  openExternal(url: string): void;
   /** Marca que voce ja viu este terminal (limpa o pedido de atencao). */
   acknowledgeTerminal(id: string): void;
   writeTerminal(id: string, data: string): void;
@@ -150,6 +156,8 @@ export interface MultiTermApi {
   onTerminalUpdate(listener: (snapshot: TerminalSnapshot) => void): () => void;
   onTerminalClose(listener: (id: string) => void): () => void;
   onUsageUpdate(listener: (summary: UsageSummary) => void): () => void;
+  /** Clicou na notificacao de um terminal: trazer ele para a tela. */
+  onFocusTerminal(listener: (id: string) => void): () => void;
 }
 
 /** Output de um terminal num lote; `seq` e o do ultimo chunk incluido. */
@@ -203,6 +211,10 @@ export const CHANNELS = {
   setColor: 'terminal:set-color',
   moveTerminal: 'terminal:move-workspace',
   interrupt: 'terminal:interrupt',
+  openExternal: 'app:open-external',
+  ackOutput: 'terminal:ack-output',
+  busyProgram: 'terminal:busy-program',
+  focusTerminal: 'terminal:focus',
   acknowledge: 'terminal:acknowledge',
   write: 'terminal:write',
   resize: 'terminal:resize',

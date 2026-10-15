@@ -51,6 +51,12 @@ export class TerminalGrid implements Board {
     return Math.max(1, Math.ceil(this.panes.length / capacity(this.layout)));
   }
 
+  /** Pagina em que o painel aparece; `-1` se nao esta na grade. */
+  pageOf(id: string): number {
+    const index = this.panes.findIndex((pane) => pane.id === id);
+    return index < 0 ? -1 : Math.floor(index / capacity(this.layout));
+  }
+
   setPanes(panes: Panel[]): void {
     this.panes = panes;
     if (this.maximizedId && !panes.some((pane) => pane.id === this.maximizedId)) {

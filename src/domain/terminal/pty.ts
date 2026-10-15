@@ -6,10 +6,15 @@ import type { TerminalSize } from './types.js';
  */
 export interface Pty {
   readonly pid: number;
+  /** Nome do processo em foreground (o shell, ou o programa que ele rodou). */
+  readonly process: string;
   write(data: string): void;
   resize(size: TerminalSize): void;
   /** Envia um sinal ao processo (SIGINT, SIGTERM, ...). */
   kill(signal?: NodeJS.Signals): void;
+  /** Para de ler o output (controle de fluxo); o programa bloqueia ao escrever. */
+  pause(): void;
+  resume(): void;
   onData(listener: (chunk: string) => void): void;
   onExit(listener: (exitCode: number, signal?: number) => void): void;
 }

@@ -6,6 +6,7 @@ import { claudeLaunchCommand, cleanCommand, parseSessionId, sessionIdOf, wantsOw
 import type { Pty, PtyFactory } from './pty.js';
 import { SignalScanner } from './signals.js';
 import type { ReplaySnapshot, TerminalSize, TerminalSnapshot, TerminalSpec, TerminalStatus } from './types.js';
+import { busyProgram } from './foreground.js';
 
 export interface SessionEvents {
   /** `seq` cresce a cada chunk, inclusive entre restarts. */
@@ -134,8 +135,12 @@ export class TerminalSession {
       return;
     }
 
-    this.pty.onData((chunk) => {
-      if (this.disposed) return;
+    // Os eventos sao deste pty. Depois de um restart, o antigo ainda pode
+    // mandar dados ou o exit: entrariam na sessao nova (e o comando inicial
+    // seria digitado antes do rc do shell novo carregar).
+    const proc = this.pty;
+    proc.onData((chunk) => {
+      if (this.disposed || this.pty !== proc) return;
       this.emitData(chunk);
       const signal = this.scanner.scan(chunk);
       this.markActive();
@@ -145,11 +150,12 @@ export class TerminalSession {
         // como se voce tivesse digitado. Nao arma o aviso de ocioso — um
         // agente recem-aberto esperando instrucao nao e novidade para ninguem.
         this.commandPending = false;
-        this.pty?.write(`${this.launch}\r`);
+        proc.write(`${this.launch}\r`);
       }
     });
 
-    this.pty.onExit((code) => {
+    proc.onExit((code) => {
+      if (this.pty !== proc) return;
       this.pty = null;
       this.clearIdleTimer();
       // O `exit` chega depois do dispose(): a sessao ja saiu do workspace e
@@ -184,6 +190,25 @@ export class TerminalSession {
     if (size.cols < 1 || size.rows < 1) return;
     this.size = size;
     this.pty?.resize(size);
+  }
+
+  /** Programa rodando alem do shell (`claude`, `npm`...), ou `null`. */
+  busyProgram(): string | null {
+    if (!this.pty) return null;
+    try {
+      return busyProgram(this.pty.process, this.shell);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Controle de fluxo do output: a tela ficou para tras / alcancou. */
+  pause(): void {
+    this.pty?.pause();
+  }
+
+  resume(): void {
+    this.pty?.resume();
   }
 
   /** Interrompe o processo em foreground sem matar a sessao (Ctrl-C). */

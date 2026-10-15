@@ -12,7 +12,7 @@ tem o seu shell real, com indicador de atividade.
 | --- | --- | --- |
 | Shell real | [`node-pty`](https://github.com/microsoft/node-pty) | PTY de verdade em Linux/macOS/Windows (ConPTY). Da stdin/stdout/stderr, sinais, resize e job control — o mesmo que o VS Code usa. |
 | Emulador | [`xterm.js`](https://xtermjs.org) | ANSI, 256/true color, cursor, mouse, scrollback, links. |
-| Desktop | Electron | Multiplataforma, acesso direto a processos do SO, uma unica janela. |
+| Desktop | Electron 44 | Acesso direto a processos do SO, uma unica janela. Testado no Linux; macOS e Windows devem funcionar (node-pty e Electron suportam), mas ainda nao foram validados e nao ha instalador para eles. |
 | Build | esbuild | Build completo em ~80ms, um arquivo de configuracao. |
 
 ## Instalacao
@@ -46,7 +46,8 @@ Outros comandos:
 ```bash
 npm start          # roda direto do diretorio do projeto
 npm run dev        # abre com DevTools
-npm run typecheck  # tsc --noEmit
+npm run typecheck  # tsc --noEmit (main) e o renderer sem tipos do Node
+npm run lint       # eslint: promessas soltas e afins
 npm test           # testes unitarios do dominio (node:test, sem Electron)
 npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 ```
@@ -69,6 +70,9 @@ npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 | `Ctrl+Enter` (numa nota) | Envia a selecao ou a linha do cursor ao terminal vinculado |
 | `Ctrl+,` | Configuracoes (tema e tamanho da fonte) |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copiar / colar (o `Ctrl+C` puro continua sendo SIGINT) |
+| `Ctrl+Shift+F` (num terminal) | Buscar no scrollback (`Enter` / `Shift+Enter` navegam, `Esc` fecha) |
+| Botao direito (num terminal) | Menu: copiar, colar, buscar, limpar, renomear, cor, reiniciar, fechar |
+| `F1` | Lista de atalhos |
 | Duplo clique no nome | Renomear |
 
 Os atalhos com `Ctrl+Shift`, `Alt+N` e `Ctrl+PageUp/PageDown` valem mesmo com o
@@ -510,10 +514,12 @@ Regras que mantem o acoplamento baixo:
 
 ## Proximos passos naturais
 
-- Atividade mais precisa lendo o processo em foreground do PTY
-  (`IPty.process` no Unix) em vez de so o fluxo de bytes.
-- Confirmacao ao fechar um terminal com processo em execucao.
-- Busca no scrollback (`@xterm/addon-search`).
+- Atividade mais precisa usando o processo em foreground do PTY (`IPty.process`,
+  ja usado para confirmar ao fechar) em vez de so o fluxo de bytes.
+- Instalador (electron-builder: AppImage/deb) e validacao em macOS e Windows.
+- Quebrar o `renderer/app.ts` em controladores (vinculos, atencao, paleta,
+  workspaces) e uma base comum para os paineis de nota e de tarefas.
+- Teste de ponta a ponta da interface (Playwright + Electron) no CI.
 
 ## Licença
 

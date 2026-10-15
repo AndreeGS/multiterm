@@ -1,4 +1,3 @@
-import { basename, dirname, join } from 'node:path';
 import { isValidBranchName } from './branch.js';
 
 /**
@@ -41,15 +40,6 @@ export interface Git {
   removeWorktree(repo: string, path: string, force: boolean): Promise<void>;
   /** Ha mudancas nao commitadas (inclusive arquivos novos)? */
   isDirty(path: string): Promise<boolean>;
-}
-
-/**
- * Pasta do worktree: irma do repo, `<pai>/<repo>.worktrees/<branch>`. Fica
- * fora do repo (nada para por no .gitignore) e agrupada (facil de achar e limpar).
- * Barras da branch viram hifen: `feat/x` -> `feat-x`.
- */
-export function worktreePath(repo: string, branch: string): string {
-  return join(dirname(repo), `${basename(repo)}.worktrees`, branch.replace(/\//g, '-'));
 }
 
 /** Le a saida de `git worktree list --porcelain`. */

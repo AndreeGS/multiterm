@@ -63,12 +63,15 @@ describe('comando com conversa propria', () => {
 
 class FakePty implements Pty {
   readonly pid = 1;
+  process = 'sh';
   readonly written: string[] = [];
   data: (chunk: string) => void = () => {};
   exit: (code: number) => void = () => {};
   write(data: string): void {
     this.written.push(data);
   }
+  pause(): void {}
+  resume(): void {}
   resize(): void {}
   kill(): void {}
   onData(listener: (chunk: string) => void): void {

@@ -25,6 +25,10 @@ export interface FrameStore {
   remove(id: string): void;
 }
 
+/** Pausa na roda/pinça que conta como fim do gesto de zoom. */
+const ZOOM_SETTLE_MS = 140;
+/** Pausa no pan/zoom antes de persistir a vista. */
+const VIEW_NOTIFY_MS = 300;
 const DEFAULT_SIZE = { width: 640, height: 400 };
 const DEFAULT_FRAME = { width: 900, height: 560 };
 const MIN_SIZE = { width: 280, height: 160 };
@@ -58,8 +62,15 @@ export class CanvasBoard implements Board {
   private readonly frameLayer = el('div', 'canvas-frames');
   private panes: Panel[] = [];
   private view: CanvasView = { x: 0, y: 0, zoom: 1 };
-  /** Frame agendado para aplicar o zoom aos paineis (0 = nenhum). */
-  private pendingFrame = 0;
+  /**
+   * Zoom em que fonte e posicoes dos paineis foram aplicadas. Durante um gesto
+   * de zoom o mundo so e escalado por CSS (barato); a fonte real dos terminais
+   * so muda quando o gesto para — trocar a fonte remede e redesenha cada xterm.
+   */
+  private renderedZoom = 1;
+  private zoomSettle: ReturnType<typeof setTimeout> | null = null;
+  /** Pan/zoom ainda nao avisados (persistir a cada mousemove seria um IPC por evento). */
+  private viewNotify: ReturnType<typeof setTimeout> | null = null;
   private maximizedId: string | null = null;
   /** Textos e grupos de outros workspaces ficam escondidos (os paineis o App filtra). */
   private workspaceId = '';
@@ -129,7 +140,16 @@ export class CanvasBoard implements Board {
    * Passa a mostrar os textos e grupos de outro workspace, com a vista dele.
    * `view` nulo = origem em 100%.
    */
+  /** Avisa ja a vista pendente: antes de trocar de workspace, para nao gravar no errado. */
+  flushView(): void {
+    if (!this.viewNotify) return;
+    clearTimeout(this.viewNotify);
+    this.viewNotify = null;
+    this.onViewChange(this.view);
+  }
+
   setWorkspace(workspaceId: string, view: CanvasView | null): void {
+    this.flushView();
     this.workspaceId = workspaceId;
     for (const item of this.texts.values()) item.element.hidden = item.workspaceId !== workspaceId;
     for (const item of this.frames.values()) item.element.hidden = item.workspaceId !== workspaceId;
@@ -357,20 +377,31 @@ export class CanvasBoard implements Board {
     const zoomChanged = view.zoom !== this.view.zoom;
     this.view = { ...view, zoom: clampZoom(view.zoom) };
     const { x, y, zoom } = this.view;
-    this.world.style.transform = `translate(${x}px, ${y}px)`;
+    this.applyWorldTransform();
     // O pontilhado do fundo acompanha a vista, dando a sensacao de mover o plano.
     this.element.style.backgroundPosition = `${x}px ${y}px`;
     this.element.style.backgroundSize = `${DOT_SPACING * zoom}px ${DOT_SPACING * zoom}px`;
     this.zoomLabel.textContent = `${Math.round(zoom * 100)}%`;
-    if (notify) this.onViewChange(this.view);
-    if (!zoomChanged) return;
-    // Varios eventos de roda por frame viram uma unica troca de fonte por painel.
-    if (!this.pendingFrame) {
-      this.pendingFrame = requestAnimationFrame(() => {
-        this.pendingFrame = 0;
-        this.render();
-      });
+    if (notify) {
+      if (this.viewNotify) clearTimeout(this.viewNotify);
+      this.viewNotify = setTimeout(() => this.flushView(), VIEW_NOTIFY_MS);
     }
+    if (!zoomChanged) return;
+    if (this.zoomSettle) clearTimeout(this.zoomSettle);
+    this.zoomSettle = setTimeout(() => {
+      this.zoomSettle = null;
+      this.render();
+    }, ZOOM_SETTLE_MS);
+  }
+
+  /** Translada a vista e, durante um gesto de zoom, escala o que foi renderizado em outro zoom. */
+  private applyWorldTransform(): void {
+    const { x, y, zoom } = this.view;
+    const factor = zoom / this.renderedZoom;
+    // Em pixel inteiro: o terminal (WebGL) e um canvas, e um canvas num
+    // deslocamento fracionario e reamostrado pelo navegador — o texto borra.
+    const at = `translate(${snapToPixel(x)}px, ${snapToPixel(y)}px)`;
+    this.world.style.transform = factor === 1 ? at : `${at} scale(${factor})`;
   }
 
   private attach(pane: Panel): void {
@@ -417,6 +448,12 @@ export class CanvasBoard implements Board {
   }
 
   private render(): void {
+    if (this.zoomSettle) {
+      clearTimeout(this.zoomSettle);
+      this.zoomSettle = null;
+    }
+    this.renderedZoom = this.view.zoom;
+    this.applyWorldTransform();
     this.zoomBar.hidden = this.maximizedId !== null;
     for (const item of this.texts.values()) item.place(this.view.zoom);
     for (const item of this.frames.values()) item.place(this.view.zoom);
@@ -450,11 +487,15 @@ export class CanvasBoard implements Board {
   /** Converte o retangulo do mundo para pixels na tela, conforme o zoom. */
   private place(pane: Panel, rect: CanvasRect): void {
     const { zoom } = this.view;
+    // Bordas em pixel inteiro (ver applyWorldTransform); largura e altura
+    // saem das bordas arredondadas, para o painel nao oscilar 1px.
+    const left = snapToPixel(rect.x * zoom);
+    const top = snapToPixel(rect.y * zoom);
     Object.assign(pane.element.style, {
-      left: `${rect.x * zoom}px`,
-      top: `${rect.y * zoom}px`,
-      width: `${rect.width * zoom}px`,
-      height: `${rect.height * zoom}px`,
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${snapToPixel((rect.x + rect.width) * zoom) - left}px`,
+      height: `${snapToPixel((rect.y + rect.height) * zoom) - top}px`,
     });
   }
 
@@ -507,4 +548,10 @@ export class CanvasBoard implements Board {
       if (resized !== start) pane.canvasRect = resized;
     });
   }
+}
+
+/** Arredonda para o pixel fisico da tela (com escala do sistema, 1px CSS != 1px). */
+function snapToPixel(value: number): number {
+  const ratio = window.devicePixelRatio || 1;
+  return Math.round(value * ratio) / ratio;
 }

@@ -87,7 +87,7 @@ export class CanvasFrameItem {
   }
 
   private update(patch: CanvasFramePatch): void {
-    this.frame = { ...this.frame, ...patch } as CanvasFrame;
+    this.frame = { ...this.frame, ...patch };
     this.render();
     this.callbacks.onChange(this.id, patch);
   }

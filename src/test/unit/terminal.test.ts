@@ -99,6 +99,7 @@ describe('comando inicial', () => {
 
 class FakePty implements Pty {
   readonly pid = 1;
+  process = 'sh';
   readonly written: string[] = [];
   killed = false;
   private dataListener: (chunk: string) => void = () => {};
@@ -107,6 +108,8 @@ class FakePty implements Pty {
   write(data: string): void {
     this.written.push(data);
   }
+  pause(): void {}
+  resume(): void {}
   resize(_size: TerminalSize): void {}
   kill(): void {
     this.killed = true;
@@ -279,6 +282,24 @@ describe('TerminalSession', () => {
     assert.equal(factory.spawned.length, 2);
     assert.equal(s.replayBuffer().data, '');
     assert.notEqual(last().status, 'exited');
+  });
+
+  it('restart: dados e exit tardios do pty antigo nao vazam para o novo', () => {
+    const s = session('npm run dev');
+    const first = factory.last;
+    first.emit('$ ');
+    s.restart();
+    first.exit(0);
+    const second = factory.last;
+    assert.notEqual(second, first);
+    // O pty antigo ainda despeja algo: nao pode contar como o prompt do novo.
+    first.emit('resto do antigo');
+    assert.deepEqual(second.written, []);
+    assert.equal(s.replayBuffer().data, '');
+    first.exit(1);
+    assert.notEqual(last().status, 'error');
+    second.emit('$ ');
+    assert.deepEqual(second.written, ['npm run dev\r']);
   });
 
   it('dispose: o exit tardio nao emite nada', () => {

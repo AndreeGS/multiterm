@@ -5,6 +5,7 @@ import type { TerminalTemplate } from '../../domain/workspace/template.js';
 import type { MultiTermApi } from '../../shared/contract.js';
 import { shortenPath } from '../paths.js';
 import { colorSwatches, paneColorVar } from './color-menu.js';
+import { trapFocus } from './modal.js';
 
 /** Sugestoes fixas; os comandos que voce usou aparecem antes delas. */
 const COMMAND_PRESETS = ['claude', 'claude --continue', 'codex', 'npm run dev'];
@@ -77,6 +78,7 @@ export function openNewTerminalDialog(
 
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
+    trapFocus(overlay);
 
     const dirInput = modal.querySelector<HTMLInputElement>('#dir')!;
     const nameInput = modal.querySelector<HTMLInputElement>('#name')!;

@@ -14,6 +14,7 @@ export type Shortcut =
   | { kind: 'palette' }
   | { kind: 'next-attention' }
   | { kind: 'workspaces' }
+  | { kind: 'help' }
   | { kind: 'focus-index'; index: number }
   | { kind: 'focus-step'; delta: 1 | -1 };
 
@@ -29,6 +30,8 @@ export function matchShortcut(event: KeyboardEvent, inTerminal: boolean): Shortc
   if (alt && !ctrl && !shift && /^Digit[1-9]$/.test(event.code)) {
     return { kind: 'focus-index', index: Number(event.code.slice(5)) - 1 };
   }
+  // F1: lista de atalhos.
+  if (event.key === 'F1' && !ctrl && !alt && !shift) return { kind: 'help' };
   if (!ctrl || alt) return null;
 
   // Ctrl+PageUp/PageDown: painel anterior/seguinte, como abas do navegador.

@@ -1,3 +1,5 @@
+import { trapFocus } from './modal.js';
+
 import {
   defaultSettings,
   FONT_SIZE_MAX,
@@ -61,6 +63,7 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
 
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
+    trapFocus(overlay);
 
     const themesBox = modal.querySelector<HTMLElement>('#themes')!;
     const fontInput = modal.querySelector<HTMLInputElement>('#font')!;

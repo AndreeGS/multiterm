@@ -4,6 +4,7 @@ import {
   dialog,
   ipcMain,
   powerMonitor,
+  screen,
   session,
   shell,
   type IpcMainEvent,
@@ -41,6 +42,7 @@ import {
   type CanvasRect,
 } from '../domain/workspace/layout.js';
 import { parsePaneColor } from '../domain/workspace/colors.js';
+import { visibleBounds } from '../domain/workspace/config.js';
 import { parseSettings, WINDOW_BACKGROUND } from '../domain/workspace/settings.js';
 import { parseTemplate } from '../domain/workspace/template.js';
 import { summarize } from '../domain/workspace/workspace.js';
@@ -55,6 +57,7 @@ import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
 import { hasClaudeTranscript, hasProjectConversations } from '../infrastructure/usage/claude-paths.js';
 import { CHANNELS, type BootstrapState, type RestoredSession } from '../shared/contract.js';
 import { AttentionNotifier } from './attention.js';
+import { FlowControl } from './flow-control.js';
 import { OutputBatcher } from './output-batcher.js';
 
 let mainWindow: BrowserWindow | null = null;
@@ -67,7 +70,31 @@ let texts: TextsService;
 let frames: FramesService;
 let tasks: TasksService;
 const worktrees = new WorktreeService(new GitCli());
-const output = new OutputBatcher((batch) => send(CHANNELS.data, batch));
+const flow = new FlowControl();
+const output = new OutputBatcher((batch) => {
+  send(CHANNELS.data, batch);
+  for (const [id, data] of batch) {
+    if (flow.sent(id, data.length)) pauseOutput(id);
+  }
+});
+/** Pausas sem confirmacao do renderer por mais que isto sao desfeitas (nunca trava um terminal). */
+const FLOW_STALL_MS = 5000;
+const stallTimers = new Map<string, NodeJS.Timeout>();
+
+function pauseOutput(id: string): void {
+  terminals.pause(id);
+  clearTimeout(stallTimers.get(id));
+  stallTimers.set(id, setTimeout(() => {
+    flow.forget(id);
+    resumeOutput(id);
+  }, FLOW_STALL_MS));
+}
+
+function resumeOutput(id: string): void {
+  clearTimeout(stallTimers.get(id));
+  stallTimers.delete(id);
+  terminals.resume(id);
+}
 /** Posicao de cada terminal na area livre. Vive aqui porque a sessao nao sabe de layout. */
 const terminalRects = new Map<string, CanvasRect>();
 /**
@@ -85,7 +112,8 @@ function send(channel: string, ...args: unknown[]): void {
 }
 
 function createWindow(): void {
-  const { window, settings } = workspace.current();
+  const { settings } = workspace.current();
+  const window = visibleBounds(workspace.current().window, screen.getAllDisplays().map((display) => display.workArea));
 
   mainWindow = new BrowserWindow({
     x: window.x,
@@ -105,7 +133,14 @@ function createWindow(): void {
     },
   });
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  // Sem o menu padrao do Electron (File/Edit/View/Window): nada nele e do app,
+  // e os atalhos que importam o proprio app trata. No macOS o menu e do
+  // sistema, fora da janela, e isto nao tem efeito.
+  mainWindow.removeMenu();
+  mainWindow.once('ready-to-show', () => {
+    if (window.maximized) mainWindow?.maximize();
+    mainWindow?.show();
+  });
   mainWindow.on('close', persistBounds);
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -120,10 +155,25 @@ function createWindow(): void {
   // carregaria outra pagina com acesso ao preload (e a criar terminais).
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault());
   mainWindow.webContents.on('will-redirect', (event) => event.preventDefault());
+  // Renderer caiu (GPU, memoria): as sessoes seguem vivas no main e o replay
+  // reconstroi as telas. Limite para nao entrar em loop se ele cair ao subir.
+  const crashes: number[] = [];
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    if (details.reason === 'clean-exit') return;
+    console.error('[main] renderer caiu:', details.reason);
+    const now = Date.now();
+    crashes.push(now);
+    while (crashes.length > 0 && now - crashes[0]! > RELOAD_WINDOW_MS) crashes.shift();
+    if (crashes.length <= MAX_RELOADS) mainWindow?.reload();
+  });
 
   void mainWindow.loadFile(RENDERER_PAGE);
   if (process.argv.includes('--dev')) mainWindow.webContents.openDevTools({ mode: 'detach' });
 }
+
+/** Recarregamentos automaticos permitidos por janela de tempo, se o renderer cair. */
+const MAX_RELOADS = 3;
+const RELOAD_WINDOW_MS = 60_000;
 
 /** Pagina do renderer: o unico remetente aceito no IPC. */
 const RENDERER_PAGE = join(__dirname, '../renderer/index.html');
@@ -155,7 +205,7 @@ const ALLOWED_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-writ
 function persistBounds(): void {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) return;
   const { x, y, width, height } = mainWindow.getNormalBounds();
-  workspace.setWindowBounds({ x, y, width, height });
+  workspace.setWindowBounds({ x, y, width, height, ...(mainWindow.isMaximized() ? { maximized: true } : {}) });
 }
 
 /** Espelha os terminais abertos no config, para reabri-los na proxima vez. */
@@ -173,8 +223,15 @@ function persistTerminals(): void {
     workspaceId: snapshot.workspaceId,
     rect: terminalRects.get(snapshot.id) ?? null,
   }));
-  workspace.setTerminals([...live, ...pendingSession]);
+  const next = [...live, ...pendingSession];
+  // Mudancas de status (executando/ocioso, varias por segundo) chegam aqui
+  // tambem, mas nao mudam nada do que e salvo: nao reescreve o config por elas.
+  const signature = JSON.stringify(next);
+  if (signature === persistedTerminals) return;
+  persistedTerminals = signature;
+  workspace.setTerminals(next);
 }
+let persistedTerminals = '';
 
 function restoreSession(): RestoredSession {
   const saved = pendingSession;
@@ -220,6 +277,8 @@ function resumeCommand(command: string, cwd: string): string {
 
 function registerIpc(): void {
   handle(CHANNELS.bootstrap, (): BootstrapState => {
+    // Renderer novo (ou recarregado): o que estava em voo nunca sera confirmado.
+    for (const id of flow.reset()) resumeOutput(id);
     const config = workspace.current();
     const active = workspace.active();
     return {
@@ -267,11 +326,14 @@ function registerIpc(): void {
     if (!spec) throw new Error('Terminal invalido.');
     // Worktree e workspace do spec so podem vir daqui: o renderer pede o
     // worktree pela branch, e o terminal nasce no workspace em uso.
-    let resolved: TerminalSpec = { ...spec, worktree: null, workspaceId: workspace.active().id };
+    let resolved: TerminalSpec = { ...spec, worktree: null };
     if (typeof worktreeBranch === 'string' && worktreeBranch.trim()) {
       const worktree = await worktrees.create(spec.cwd, worktreeBranch.trim());
       resolved = { ...resolved, cwd: worktree.path, worktree };
     }
+    // Lido depois do git: trocar de workspace enquanto o worktree e criado
+    // poe o terminal no workspace em que voce esta agora.
+    resolved = { ...resolved, workspaceId: workspace.active().id };
     const snapshot = terminals.create(resolved);
     // O recente e o diretorio que voce escolheu, nao a pasta do worktree.
     workspace.rememberDir(snapshot.worktree ? snapshot.worktree.repo : snapshot.cwd);
@@ -340,6 +402,15 @@ function registerIpc(): void {
     if (parsed) terminalRects.set(id, parsed);
     else terminalRects.delete(id);
     persistTerminals();
+  });
+  handle(CHANNELS.busyProgram, (_event, id: string) => terminals.busyProgram(id));
+  on(CHANNELS.ackOutput, (_event, id: unknown, bytes: unknown) => {
+    if (typeof id !== 'string' || !Number.isFinite(bytes)) return;
+    if (flow.acked(id, bytes as number)) resumeOutput(id);
+    else if (flow.isPaused(id)) pauseOutput(id); // ainda alcancando: renova o prazo
+  });
+  on(CHANNELS.openExternal, (_event, url: unknown) => {
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
   });
   handle(CHANNELS.interrupt, (_event, id: string) => terminals.interrupt(id));
   handle(CHANNELS.replay, (_event, id: string) => {
@@ -469,7 +540,7 @@ if (!app.requestSingleInstanceLock()) {
     texts = new TextsService(new JsonTextsStore(app.getPath('userData')));
     frames = new FramesService(new JsonFramesStore(app.getPath('userData')));
     tasks = new TasksService(new JsonTasksStore(app.getPath('userData')));
-    attention = new AttentionNotifier(() => mainWindow);
+    attention = new AttentionNotifier(() => mainWindow, (id) => send(CHANNELS.focusTerminal, id));
     terminals = new TerminalService(new NodePtyFactory(), {
       onData: (id, chunk, seq) => output.push(id, chunk, seq),
       onUpdate: (snapshot) => {
@@ -481,6 +552,9 @@ if (!app.requestSingleInstanceLock()) {
       onClose: (id) => {
         attention.forget(id);
         terminalRects.delete(id);
+        flow.forget(id);
+        clearTimeout(stallTimers.get(id));
+        stallTimers.delete(id);
         persistTerminals();
         output.flush();
         send(CHANNELS.closed, id);
