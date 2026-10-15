@@ -42,6 +42,16 @@ export interface BootstrapState {
   readonly defaultDir: string;
   readonly homeDir: string;
   readonly configPath: string;
+  /** Arquivos de dados que estavam corrompidos nesta abertura (para avisar). */
+  readonly recoveredFiles: readonly RecoveredFileNotice[];
+}
+
+export interface RecoveredFileNotice {
+  readonly file: string;
+  /** Onde o arquivo corrompido foi guardado; `null` se nao deu para mover. */
+  readonly movedTo: string | null;
+  /** O conteudo foi restaurado do backup; `false` = comecou vazio. */
+  readonly fromBackup: boolean;
 }
 
 export interface RestoredSession {

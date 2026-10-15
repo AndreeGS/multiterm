@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { applyTextPatch, createCanvasText, type CanvasText, type CanvasTextPatch } from '../../domain/canvas/text.js';
 import type { JsonTextsStore } from '../../infrastructure/persistence/json-texts-store.js';
+import { orphanIds } from '../../domain/workspace/workspace.js';
 
 const SAVE_DEBOUNCE_MS = 600;
 
@@ -36,6 +37,17 @@ export class TextsService {
 
   remove(id: string): void {
     if (this.texts.delete(id)) this.scheduleSave();
+  }
+
+  /** Move para `target` o que esta num workspace que nao existe. Devolve quantos. */
+  adoptOrphans(validIds: ReadonlySet<string>, target: string): number {
+    const ids = orphanIds(this.texts.values(), validIds);
+    for (const id of ids) {
+      const item = this.texts.get(id);
+      if (item) this.texts.set(id, { ...item, workspaceId: target });
+    }
+    if (ids.length > 0) this.scheduleSave();
+    return ids.length;
   }
 
   /** Apaga tudo de um workspace que esta sendo removido. */
