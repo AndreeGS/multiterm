@@ -46,7 +46,7 @@ export class Toolbar {
     const newBtn = document.createElement('button');
     newBtn.className = 'primary';
     newBtn.textContent = '+ Terminal';
-    newBtn.title = 'Novo terminal (Ctrl+T)';
+    newBtn.title = 'Novo terminal (Ctrl+Shift+T)';
     newBtn.addEventListener('click', () => this.callbacks.onNewTerminal());
 
     const templatesBtn = document.createElement('button');
@@ -166,9 +166,15 @@ export class Toolbar {
     this.restoreBtn.title = `Reabre nas mesmas posicoes, com shells novos:\n${names.join('\n')}`;
   }
 
-  setPaging(page: number, pageCount: number): void {
+  /** `waitingPages`: outras paginas com terminal aguardando (ganham um ●). */
+  setPaging(page: number, pageCount: number, waitingPages: number[] = []): void {
     this.pageGroup.hidden = pageCount <= 1;
-    this.pageLabel.textContent = `${page + 1}/${pageCount}`;
+    const waiting = waitingPages.length > 0;
+    this.pageLabel.textContent = `${page + 1}/${pageCount}${waiting ? ' ●' : ''}`;
+    this.pageLabel.classList.toggle('attention', waiting);
+    this.pageLabel.title = waiting
+      ? `Terminal aguardando na pagina ${waitingPages.map((n) => n + 1).join(', ')}`
+      : '';
     this.prevBtn.disabled = page === 0;
     this.nextBtn.disabled = page >= pageCount - 1;
   }

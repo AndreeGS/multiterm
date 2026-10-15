@@ -10,6 +10,10 @@ class NodePty implements Pty {
     return this.proc.pid;
   }
 
+  get process(): string {
+    return this.proc.process;
+  }
+
   write(data: string): void {
     this.proc.write(data);
   }

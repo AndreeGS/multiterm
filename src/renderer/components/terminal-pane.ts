@@ -1,4 +1,7 @@
+import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
@@ -10,10 +13,12 @@ import { shortenPath } from '../paths.js';
 import { matchShortcut } from '../shortcuts.js';
 import { MIN_CONTRAST, TERMINAL_THEMES, type Appearance } from '../theme.js';
 import { openColorMenu, paneColorVar } from './color-menu.js';
+import { openContextMenu } from './context-menu.js';
+import { openConfirm } from './dialogs.js';
 import { beginRename, button, el, type Panel } from './panel.js';
 import { formatTokens, money } from './usage-bar.js';
 
-const STATUS_LABEL: Record<TerminalSnapshot['status'], string> = {
+export const STATUS_LABEL: Record<TerminalSnapshot['status'], string> = {
   starting: 'iniciando',
   running: 'executando',
   idle: 'aguardando',
@@ -33,6 +38,16 @@ const PTY_RESIZE_DELAY_MS = 80;
 /** Confirmacoes de output desenhado vao agrupadas neste intervalo. */
 const ACK_INTERVAL_MS = 50;
 
+/** Destaque das ocorrencias da busca (o addon exige cores #RRGGBB). */
+const SEARCH_DECORATIONS = {
+  matchBackground: '#6b5410',
+  matchBorder: '#c9a227',
+  matchOverviewRuler: '#c9a227',
+  activeMatchBackground: '#c27c0e',
+  activeMatchBorder: '#ffcf4d',
+  activeMatchColorOverviewRuler: '#ffcf4d',
+};
+
 export interface PaneCallbacks {
   onFocus(id: string): void;
   onMaximize(id: string): void;
@@ -50,6 +65,10 @@ export class TerminalPane implements Panel {
   private rect: CanvasRect | null;
   private readonly term: Terminal;
   private readonly fit = new FitAddon();
+  private readonly search = new SearchAddon();
+  private readonly searchBar: HTMLElement;
+  private readonly searchInput: HTMLInputElement;
+  private readonly searchCount: HTMLElement;
   private readonly dot: HTMLElement;
   private readonly nameEl: HTMLElement;
   private readonly cwdEl: HTMLElement;
@@ -101,9 +120,7 @@ export class TerminalPane implements Panel {
     const title = el('div', 'pane-title');
     title.append(this.nameEl, this.cwdEl);
     title.title = 'Duplo clique para renomear';
-    title.addEventListener('dblclick', () =>
-      beginRename(this.nameEl, this.snapshot.name, (name) => void this.api.renameTerminal(this.id, name)),
-    );
+    title.addEventListener('dblclick', () => this.rename());
 
     const actions = el('div', 'pane-actions');
     this.maximizeBtn = button('⤢', 'Maximizar / restaurar', () =>
@@ -114,7 +131,7 @@ export class TerminalPane implements Panel {
     actions.append(
       this.colorBtn,
       button('■', 'Interromper (Ctrl+C)', () => void this.api.interruptTerminal(this.id)),
-      button('⟳', 'Reiniciar shell', () => void this.api.restartTerminal(this.id)),
+      button('⟳', 'Reiniciar shell', () => void this.restart()),
       this.maximizeBtn,
       button('✕', 'Fechar terminal', () => this.callbacks.onClose(this.id)),
     );
@@ -125,6 +142,29 @@ export class TerminalPane implements Panel {
     header.append(this.dot, title, this.usageEl, actions);
 
     const body = el('div', 'pane-body');
+    this.searchInput = el('input', 'search-input');
+    this.searchInput.placeholder = 'Buscar no terminal';
+    this.searchInput.setAttribute('aria-label', 'Buscar no terminal');
+    this.searchCount = el('span', 'search-count');
+    this.searchBar = el('div', 'search-bar');
+    this.searchBar.hidden = true;
+    this.searchBar.append(
+      this.searchInput,
+      this.searchCount,
+      button('↑', 'Anterior (Shift+Enter)', () => this.findNext(true)),
+      button('↓', 'Proxima (Enter)', () => this.findNext(false)),
+      button('✕', 'Fechar busca (Esc)', () => this.closeSearch()),
+    );
+    this.searchInput.addEventListener('input', () => this.findNext(false, true));
+    this.searchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') this.findNext(event.shiftKey);
+      else if (event.key === 'Escape') this.closeSearch();
+      else return;
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    // Flutua sobre o terminal: abrir a busca nao muda o tamanho do pty.
+    body.append(this.searchBar);
     this.element.append(header, body);
     this.element.addEventListener('mousedown', () => this.callbacks.onFocus(this.id));
 
@@ -134,6 +174,7 @@ export class TerminalPane implements Panel {
       lineHeight: 1.2,
       cursorBlink: true,
       scrollback: 10_000,
+      // A largura Unicode 11 (abaixo) e API proposta do xterm.
       allowProposedApi: true,
       theme: TERMINAL_THEMES[appearance.theme],
       minimumContrastRatio: MIN_CONTRAST[appearance.theme],
@@ -144,8 +185,27 @@ export class TerminalPane implements Panel {
     this.term.loadAddon(this.fit);
     // URLs soltas no texto: o handler padrao tambem abriria uma janela vazia.
     this.term.loadAddon(new WebLinksAddon((_event, uri) => this.api.openExternal(uri)));
+    this.term.loadAddon(this.search);
+    this.search.onDidChangeResults(({ resultIndex, resultCount }) => {
+      this.searchCount.textContent = resultCount === 0 ? 'nada' : `${resultIndex + 1}/${resultCount}`;
+    });
+    // Emoji e caracteres largos com a largura que os agentes (Ink, etc.) assumem.
+    this.term.loadAddon(new Unicode11Addon());
+    this.term.unicode.activeVersion = '11';
+    // OSC 52: o programa pode copiar para a area de transferencia (ex.: o
+    // `/copy` de um agente, ou o vim via SSH). Ler nao: qualquer texto
+    // impresso no terminal poderia pedir o conteudo copiado de volta.
+    this.term.loadAddon(new ClipboardAddon(undefined, {
+      readText: () => '',
+      writeText: (_selection, text) => navigator.clipboard.writeText(text),
+    }));
     this.term.open(body);
     this.loadWebgl();
+    body.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      this.callbacks.onFocus(this.id);
+      this.openMenu(event.clientX, event.clientY);
+    });
 
     this.term.onData((data) => this.api.writeTerminal(this.id, data));
     this.term.attachCustomKeyEventHandler((event) => this.handleKey(event));
@@ -392,11 +452,86 @@ export class TerminalPane implements Panel {
     this.refit();
   }
 
+  /** Barra de busca no scrollback (Ctrl+Shift+F); ja aberta, so volta o foco a ela. */
+  openSearch(): void {
+    this.searchBar.hidden = false;
+    const selection = this.term.getSelection();
+    if (selection && !selection.includes('\n')) this.searchInput.value = selection;
+    this.searchInput.focus();
+    this.searchInput.select();
+    if (this.searchInput.value) this.findNext(false, true);
+  }
+
+  private closeSearch(): void {
+    this.searchBar.hidden = true;
+    this.search.clearDecorations();
+    this.searchCount.textContent = '';
+    this.term.focus();
+  }
+
+  private findNext(backwards: boolean, incremental = false): void {
+    const query = this.searchInput.value;
+    if (!query) {
+      this.search.clearDecorations();
+      this.searchCount.textContent = '';
+      return;
+    }
+    const options = { incremental, decorations: SEARCH_DECORATIONS };
+    if (backwards) this.search.findPrevious(query, options);
+    else this.search.findNext(query, options);
+  }
+
+  /** Reiniciar mata o que estiver rodando: com um programa aberto, pergunta antes. */
+  async restart(): Promise<void> {
+    const busy = await this.api.busyProgram(this.id);
+    if (busy && !await openConfirm({
+      title: `Reiniciar "${this.snapshot.name}"?`,
+      message: `${busy} ainda esta rodando neste terminal e sera encerrado.`,
+      confirmLabel: 'Reiniciar',
+      danger: true,
+    })) return;
+    await this.api.restartTerminal(this.id);
+  }
+
+  private openMenu(x: number, y: number): void {
+    const selection = this.term.getSelection();
+    openContextMenu(x, y, [
+      { label: 'Copiar', hint: 'Ctrl+Shift+C', disabled: !selection, run: () => void navigator.clipboard.writeText(selection) },
+      { label: 'Colar', hint: 'Ctrl+Shift+V', run: () => void this.pasteClipboard() },
+      { label: 'Selecionar tudo', run: () => this.term.selectAll() },
+      null,
+      { label: 'Buscar…', hint: 'Ctrl+Shift+F', run: () => this.openSearch() },
+      { label: 'Limpar tela', run: () => this.term.clear() },
+      null,
+      { label: 'Renomear', run: () => this.rename() },
+      { label: 'Cor…', run: () => void this.pickColor() },
+      { label: 'Interromper (Ctrl+C)', run: () => void this.api.interruptTerminal(this.id) },
+      { label: 'Reiniciar shell', run: () => void this.restart() },
+      null,
+      { label: 'Fechar terminal', hint: 'Ctrl+Shift+W', danger: true, run: () => this.callbacks.onClose(this.id) },
+    ]);
+  }
+
+  private rename(): void {
+    beginRename(this.nameEl, this.snapshot.name, (name) => void this.api.renameTerminal(this.id, name));
+  }
+
+  private async pasteClipboard(): Promise<void> {
+    const text = await navigator.clipboard.readText();
+    if (text) this.term.paste(text);
+    this.term.focus();
+  }
+
   private handleKey(event: KeyboardEvent): boolean {
     if (event.type !== 'keydown') return true;
     // Atalho do app: o xterm nao repassa ao shell, e o App (no window) executa.
     if (matchShortcut(event, true)) return false;
     const mod = event.ctrlKey && event.shiftKey;
+    if (mod && event.code === 'KeyF') {
+      event.preventDefault();
+      this.openSearch();
+      return false;
+    }
     // Ctrl+Shift+C/V: copiar/colar sem colidir com Ctrl+C (SIGINT) do shell.
     if (mod && event.code === 'KeyC') {
       const selection = this.term.getSelection();
@@ -407,9 +542,7 @@ export class TerminalPane implements Panel {
       // Sem o preventDefault o Chromium tambem cola nativamente (Ctrl+Shift+V e
       // "colar sem formatacao") no textarea do xterm, e o texto entrava duas vezes.
       event.preventDefault();
-      void navigator.clipboard.readText().then((text) => {
-        if (text) this.term.paste(text);
-      });
+      void this.pasteClipboard();
       return false;
     }
     return true;

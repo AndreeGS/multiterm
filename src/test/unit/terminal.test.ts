@@ -99,6 +99,7 @@ describe('comando inicial', () => {
 
 class FakePty implements Pty {
   readonly pid = 1;
+  process = 'sh';
   readonly written: string[] = [];
   killed = false;
   private dataListener: (chunk: string) => void = () => {};

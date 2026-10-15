@@ -6,6 +6,7 @@ import { claudeLaunchCommand, cleanCommand, parseSessionId, sessionIdOf, wantsOw
 import type { Pty, PtyFactory } from './pty.js';
 import { SignalScanner } from './signals.js';
 import type { ReplaySnapshot, TerminalSize, TerminalSnapshot, TerminalSpec, TerminalStatus } from './types.js';
+import { busyProgram } from './foreground.js';
 
 export interface SessionEvents {
   /** `seq` cresce a cada chunk, inclusive entre restarts. */
@@ -189,6 +190,16 @@ export class TerminalSession {
     if (size.cols < 1 || size.rows < 1) return;
     this.size = size;
     this.pty?.resize(size);
+  }
+
+  /** Programa rodando alem do shell (`claude`, `npm`...), ou `null`. */
+  busyProgram(): string | null {
+    if (!this.pty) return null;
+    try {
+      return busyProgram(this.pty.process, this.shell);
+    } catch {
+      return null;
+    }
   }
 
   /** Controle de fluxo do output: a tela ficou para tras / alcancou. */
