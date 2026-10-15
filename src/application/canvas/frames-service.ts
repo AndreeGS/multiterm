@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { applyFramePatch, createFrame, type CanvasFrame, type CanvasFramePatch } from '../../domain/canvas/frame.js';
 import type { CanvasRect } from '../../domain/workspace/layout.js';
 import type { JsonFramesStore } from '../../infrastructure/persistence/json-frames-store.js';
+import { orphanIds } from '../../domain/workspace/workspace.js';
 
 const SAVE_DEBOUNCE_MS = 600;
 
@@ -34,6 +35,17 @@ export class FramesService {
 
   remove(id: string): void {
     if (this.frames.delete(id)) this.scheduleSave();
+  }
+
+  /** Move para `target` o que esta num workspace que nao existe. Devolve quantos. */
+  adoptOrphans(validIds: ReadonlySet<string>, target: string): number {
+    const ids = orphanIds(this.frames.values(), validIds);
+    for (const id of ids) {
+      const item = this.frames.get(id);
+      if (item) this.frames.set(id, { ...item, workspaceId: target });
+    }
+    if (ids.length > 0) this.scheduleSave();
+    return ids.length;
   }
 
   /** Apaga tudo de um workspace que esta sendo removido. */

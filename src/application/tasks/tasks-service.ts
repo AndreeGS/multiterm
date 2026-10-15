@@ -6,6 +6,7 @@ import {
   type TaskListPatch,
 } from '../../domain/tasks/task-list.js';
 import type { JsonTasksStore } from '../../infrastructure/persistence/json-tasks-store.js';
+import { orphanIds } from '../../domain/workspace/workspace.js';
 
 const SAVE_DEBOUNCE_MS = 600;
 
@@ -42,6 +43,17 @@ export class TasksService {
 
   remove(id: string): void {
     if (this.lists.delete(id)) this.scheduleSave();
+  }
+
+  /** Move para `target` o que esta num workspace que nao existe. Devolve quantos. */
+  adoptOrphans(validIds: ReadonlySet<string>, target: string): number {
+    const ids = orphanIds(this.lists.values(), validIds);
+    for (const id of ids) {
+      const item = this.lists.get(id);
+      if (item) this.lists.set(id, { ...item, workspaceId: target });
+    }
+    if (ids.length > 0) this.scheduleSave();
+    return ids.length;
   }
 
   /** Apaga tudo de um workspace que esta sendo removido. */

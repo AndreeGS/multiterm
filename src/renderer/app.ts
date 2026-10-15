@@ -8,7 +8,7 @@ import type { UsageSummary, UsageTotals } from '../domain/usage/types.js';
 import { capacity, isGridLayout, layoutFor, type CanvasRect, type LayoutId } from '../domain/workspace/layout.js';
 import type { SavedTerminal } from '../domain/workspace/config.js';
 import { defaultSettings, type Settings } from '../domain/workspace/settings.js';
-import type { MultiTermApi } from '../shared/contract.js';
+import type { MultiTermApi, RecoveredFileNotice } from '../shared/contract.js';
 import { CanvasBoard } from './components/canvas.js';
 import { LinkLayer, type LinkPair } from './components/link-layer.js';
 import { paneColorVar } from './components/color-menu.js';
@@ -144,6 +144,17 @@ export class App {
     this.refreshLinks();
     this.refreshWorkspaceUi();
     this.applyLayout(state.layout);
+    if (state.recoveredFiles.length > 0) void this.warnRecoveredFiles(state.recoveredFiles);
+  }
+
+  /** Arquivo de dados corrompido: o main ja o guardou de lado; aqui so avisa. */
+  private async warnRecoveredFiles(files: readonly RecoveredFileNotice[]): Promise<void> {
+    const lines = files.map((item) => {
+      const outcome = item.fromBackup ? 'restaurado do backup' : 'sem backup, comecou vazio';
+      const kept = item.movedTo ? `\n  original guardado em ${item.movedTo}` : '';
+      return `• ${item.file}: ${outcome}${kept}`;
+    });
+    await openAlert('Arquivo de dados corrompido', lines.join('\n'));
   }
 
   private setPendingSession(terminals: SavedTerminal[]): void {

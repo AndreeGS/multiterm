@@ -55,6 +55,22 @@ export function parseWorkspaceId(raw: unknown): string {
   return typeof raw === 'string' && raw.length > 0 && raw.length <= 64 ? raw : DEFAULT_WORKSPACE_ID;
 }
 
+/**
+ * Ids dos itens cujo workspace nao existe mais (config resetado, workspace
+ * apagado por fora). O renderer filtra por workspace: sem remapear, ficariam
+ * invisiveis para sempre.
+ */
+export function orphanIds(
+  items: Iterable<{ readonly id: string; readonly workspaceId: string }>,
+  validIds: ReadonlySet<string>,
+): string[] {
+  const orphans: string[] = [];
+  for (const item of items) {
+    if (!validIds.has(item.workspaceId)) orphans.push(item.id);
+  }
+  return orphans;
+}
+
 export function parseLayoutSizes(raw: unknown): LayoutSizes {
   const sizes: LayoutSizes = {};
   if (typeof raw !== 'object' || raw === null) return sizes;

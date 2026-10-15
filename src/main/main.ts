@@ -1,8 +1,19 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  powerMonitor,
+  session,
+  shell,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
+} from 'electron';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { WorktreeService } from '../application/git/worktree-service.js';
 import { TerminalService } from '../application/terminal/terminal-service.js';
 import { NotesService } from '../application/notes/notes-service.js';
@@ -17,7 +28,9 @@ import type { CanvasTextPatch } from '../domain/canvas/text.js';
 import type { CanvasFramePatch } from '../domain/canvas/frame.js';
 import type { TaskListPatch } from '../domain/tasks/task-list.js';
 import { isClaudeCommand, withContinue } from '../domain/terminal/command.js';
+import { parseTerminalSize, parseTerminalSpec } from '../domain/terminal/spec.js';
 import type { TerminalSpec } from '../domain/terminal/types.js';
+import { isSafeExternalUrl } from '../domain/url.js';
 import type { SavedTerminal } from '../domain/workspace/config.js';
 import {
   isGridLayout,
@@ -31,6 +44,7 @@ import { parsePaneColor } from '../domain/workspace/colors.js';
 import { parseSettings, WINDOW_BACKGROUND } from '../domain/workspace/settings.js';
 import { parseTemplate } from '../domain/workspace/template.js';
 import { summarize } from '../domain/workspace/workspace.js';
+import { takeRecoveredFiles } from '../infrastructure/persistence/atomic-json.js';
 import { JsonConfigStore } from '../infrastructure/persistence/json-config-store.js';
 import { JsonNotesStore } from '../infrastructure/persistence/json-notes-store.js';
 import { JsonTextsStore } from '../infrastructure/persistence/json-texts-store.js';
@@ -87,7 +101,7 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -97,15 +111,46 @@ function createWindow(): void {
     mainWindow = null;
   });
 
-  // Links externos abrem no navegador, nunca dentro do app.
+  // Links externos abrem no navegador, nunca dentro do app — e so http(s)/mailto.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
+  // A janela nunca sai do renderer: um arquivo ou URL arrastado para ela
+  // carregaria outra pagina com acesso ao preload (e a criar terminais).
+  mainWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+  mainWindow.webContents.on('will-redirect', (event) => event.preventDefault());
 
-  void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
+  void mainWindow.loadFile(RENDERER_PAGE);
   if (process.argv.includes('--dev')) mainWindow.webContents.openDevTools({ mode: 'detach' });
 }
+
+/** Pagina do renderer: o unico remetente aceito no IPC. */
+const RENDERER_PAGE = join(__dirname, '../renderer/index.html');
+const RENDERER_URL = pathToFileURL(RENDERER_PAGE).href;
+
+function isTrustedSender(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  const url = event.senderFrame?.url;
+  return typeof url === 'string' && url.split(/[?#]/)[0] === RENDERER_URL;
+}
+
+/** `ipcMain.handle` que recusa chamadas de qualquer frame que nao seja o renderer. */
+function handle(channel: string, listener: (event: IpcMainInvokeEvent, ...args: any[]) => unknown): void {
+  ipcMain.handle(channel, (event, ...args: unknown[]) => {
+    if (!isTrustedSender(event)) throw new Error('Remetente nao autorizado.');
+    return listener(event, ...args);
+  });
+}
+
+/** `ipcMain.on` que ignora mensagens de qualquer frame que nao seja o renderer. */
+function on(channel: string, listener: (event: IpcMainEvent, ...args: any[]) => void): void {
+  ipcMain.on(channel, (event, ...args: unknown[]) => {
+    if (isTrustedSender(event)) listener(event, ...args);
+  });
+}
+
+/** Permissoes que o renderer usa (copiar/colar no terminal e notas); o resto e negado. */
+const ALLOWED_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-write', 'notifications']);
 
 function persistBounds(): void {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) return;
@@ -174,7 +219,7 @@ function resumeCommand(command: string, cwd: string): string {
 }
 
 function registerIpc(): void {
-  ipcMain.handle(CHANNELS.bootstrap, (): BootstrapState => {
+  handle(CHANNELS.bootstrap, (): BootstrapState => {
     const config = workspace.current();
     const active = workspace.active();
     return {
@@ -197,16 +242,17 @@ function registerIpc(): void {
       defaultDir: config.recentDirs[0] ?? homedir(),
       homeDir: homedir(),
       configPath: join(app.getPath('userData'), 'config.json'),
+      recoveredFiles: takeRecoveredFiles(),
     };
   });
 
-  ipcMain.handle(CHANNELS.sessionRestore, () => restoreSession());
-  ipcMain.handle(CHANNELS.sessionDiscard, () => {
+  handle(CHANNELS.sessionRestore, () => restoreSession());
+  handle(CHANNELS.sessionDiscard, () => {
     pendingSession = [];
     persistTerminals();
   });
 
-  ipcMain.handle(CHANNELS.pickDirectory, async (_event, startIn?: string) => {
+  handle(CHANNELS.pickDirectory, async (_event, startIn?: string) => {
     if (!mainWindow) return null;
     const result = await dialog.showOpenDialog(mainWindow, {
       title: 'Diretorio do projeto',
@@ -216,7 +262,9 @@ function registerIpc(): void {
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
 
-  ipcMain.handle(CHANNELS.create, async (_event, spec: TerminalSpec, worktreeBranch?: unknown) => {
+  handle(CHANNELS.create, async (_event, raw: unknown, worktreeBranch?: unknown) => {
+    const spec = parseTerminalSpec(raw);
+    if (!spec) throw new Error('Terminal invalido.');
     // Worktree e workspace do spec so podem vir daqui: o renderer pede o
     // worktree pela branch, e o terminal nasce no workspace em uso.
     let resolved: TerminalSpec = { ...spec, worktree: null, workspaceId: workspace.active().id };
@@ -232,23 +280,26 @@ function registerIpc(): void {
     return snapshot;
   });
 
-  ipcMain.handle(CHANNELS.close, (_event, id: string) => terminals.close(id));
-  ipcMain.handle(CHANNELS.restart, (_event, id: string, cwd?: string) => {
+  handle(CHANNELS.close, (_event, id: string) => terminals.close(id));
+  handle(CHANNELS.restart, (_event, id: string, raw?: unknown) => {
+    const cwd = typeof raw === 'string' && raw ? raw : undefined;
     terminals.restart(id, cwd);
     if (cwd) workspace.rememberDir(cwd);
   });
-  ipcMain.handle(CHANNELS.rename, (_event, id: string, name: string) => terminals.rename(id, name));
-  ipcMain.handle(CHANNELS.moveTerminal, (_event, id: string, workspaceId: unknown) => {
+  handle(CHANNELS.rename, (_event, id: string, name: unknown) => {
+    if (typeof name === 'string' && name.length <= 200) terminals.rename(id, name);
+  });
+  handle(CHANNELS.moveTerminal, (_event, id: string, workspaceId: unknown) => {
     if (typeof workspaceId === 'string' && workspace.has(workspaceId)) terminals.moveToWorkspace(id, workspaceId);
   });
-  ipcMain.handle(CHANNELS.workspaceSwitch, (_event, id: string) => workspace.activate(id));
-  ipcMain.handle(CHANNELS.workspaceCreate, (_event, name: unknown) =>
+  handle(CHANNELS.workspaceSwitch, (_event, id: string) => workspace.activate(id));
+  handle(CHANNELS.workspaceCreate, (_event, name: unknown) =>
     workspace.createWorkspace(typeof name === 'string' ? name : ''));
-  ipcMain.handle(CHANNELS.workspaceRename, (_event, id: string, name: unknown) => {
+  handle(CHANNELS.workspaceRename, (_event, id: string, name: unknown) => {
     if (typeof name === 'string') workspace.renameWorkspace(id, name);
     return workspace.current().workspaces.map(summarize);
   });
-  ipcMain.handle(CHANNELS.workspaceDelete, (_event, id: string) => {
+  handle(CHANNELS.workspaceDelete, (_event, id: string) => {
     if (!workspace.removeWorkspace(id)) return null;
     for (const snapshot of terminals.list()) {
       if (snapshot.workspaceId === id) terminals.close(snapshot.id);
@@ -261,97 +312,138 @@ function registerIpc(): void {
     persistTerminals();
     return workspace.active();
   });
-  ipcMain.handle(CHANNELS.setColor, (_event, id: string, color: unknown) => {
+  handle(CHANNELS.setColor, (_event, id: string, color: unknown) => {
     terminals.setColor(id, parsePaneColor(color));
   });
-  ipcMain.handle(CHANNELS.gitInfo, (_event, cwd: unknown) =>
+  handle(CHANNELS.gitInfo, (_event, cwd: unknown) =>
     typeof cwd === 'string' && cwd ? worktrees.info(cwd) : { repo: null, branch: null });
-  ipcMain.handle(CHANNELS.worktreeDirty, (_event, raw: unknown) => {
+  handle(CHANNELS.worktreeDirty, (_event, raw: unknown) => {
     const worktree = parseWorktreeInfo(raw);
     return worktree ? worktrees.isDirty(worktree) : false;
   });
-  ipcMain.handle(CHANNELS.worktreeRemove, async (_event, raw: unknown, force: unknown) => {
+  handle(CHANNELS.worktreeRemove, async (_event, raw: unknown, force: unknown) => {
     const worktree = parseWorktreeInfo(raw);
     if (!worktree) throw new Error('Worktree invalido.');
     await worktrees.remove(worktree, force === true);
   });
-  ipcMain.handle(CHANNELS.templateSave, (_event, input: unknown) => {
+  handle(CHANNELS.templateSave, (_event, input: unknown) => {
     const template = parseTemplate(input, randomUUID());
     if (template) workspace.saveTemplate(template);
     return workspace.current().templates;
   });
-  ipcMain.handle(CHANNELS.templateDelete, (_event, id: string) => {
+  handle(CHANNELS.templateDelete, (_event, id: string) => {
     workspace.removeTemplate(id);
     return workspace.current().templates;
   });
-  ipcMain.on(CHANNELS.setRect, (_event, id: string, rect: unknown) => {
+  on(CHANNELS.setRect, (_event, id: string, rect: unknown) => {
     const parsed = parseCanvasRect(rect);
     if (parsed) terminalRects.set(id, parsed);
     else terminalRects.delete(id);
     persistTerminals();
   });
-  ipcMain.handle(CHANNELS.interrupt, (_event, id: string) => terminals.interrupt(id));
-  ipcMain.handle(CHANNELS.replay, (_event, id: string) => {
+  handle(CHANNELS.interrupt, (_event, id: string) => terminals.interrupt(id));
+  handle(CHANNELS.replay, (_event, id: string) => {
     // O que esta no lote entra no replay; entregar antes garante que nenhum
     // lote misture chunks de antes e de depois dele.
     output.flush();
     return terminals.replay(id);
   });
 
-  ipcMain.on(CHANNELS.acknowledge, (_event, id: string) => terminals.acknowledge(id));
-  ipcMain.on(CHANNELS.write, (_event, id: string, data: string) => terminals.write(id, data));
-  ipcMain.on(CHANNELS.resize, (_event, id: string, cols: number, rows: number) => {
-    terminals.resize(id, { cols, rows });
+  on(CHANNELS.acknowledge, (_event, id: string) => terminals.acknowledge(id));
+  on(CHANNELS.write, (_event, id: string, data: unknown) => {
+    if (typeof data === 'string') terminals.write(id, data);
   });
-  ipcMain.handle(CHANNELS.usageGet, () => usage.current());
-  ipcMain.on(CHANNELS.usageRefresh, () => void usage.refresh());
-  ipcMain.on(CHANNELS.setLayout, (_event, layout: unknown) => {
+  on(CHANNELS.resize, (_event, id: string, cols: unknown, rows: unknown) => {
+    const size = parseTerminalSize(cols, rows);
+    if (size) terminals.resize(id, size);
+  });
+  handle(CHANNELS.usageGet, () => usage.current());
+  on(CHANNELS.usageRefresh, () => void usage.refresh());
+  on(CHANNELS.setLayout, (_event, layout: unknown) => {
     if (isLayout(layout)) workspace.setLayout(layout);
   });
-  ipcMain.on(CHANNELS.setLayoutSizes, (_event, layout: unknown, sizes: unknown) => {
+  on(CHANNELS.setLayoutSizes, (_event, layout: unknown, sizes: unknown) => {
     if (!isGridLayout(layout)) return;
     const parsed = parseTrackSizes(layout, sizes);
     if (parsed) workspace.setLayoutSizes(layout, parsed);
   });
-  ipcMain.on(CHANNELS.setCanvasView, (_event, view: unknown) => {
+  on(CHANNELS.setCanvasView, (_event, view: unknown) => {
     const parsed = parseCanvasView(view);
     if (parsed) workspace.setCanvasView(parsed);
   });
-  ipcMain.on(CHANNELS.setSettings, (_event, settings: unknown) => {
+  on(CHANNELS.setSettings, (_event, settings: unknown) => {
     const parsed = parseSettings(settings);
     workspace.setSettings(parsed);
     mainWindow?.setBackgroundColor(WINDOW_BACKGROUND[parsed.theme]);
   });
 
-  ipcMain.handle(CHANNELS.noteCreate, () => notes.create(workspace.active().id));
-  ipcMain.on(CHANNELS.noteUpdate, (_event, id: string, patch: NotePatch) => {
+  handle(CHANNELS.noteCreate, () => notes.create(workspace.active().id));
+  on(CHANNELS.noteUpdate, (_event, id: string, patch: NotePatch) => {
     if (typeof patch === 'object' && patch !== null) notes.update(id, withKnownWorkspace(patch));
   });
-  ipcMain.handle(CHANNELS.noteDelete, (_event, id: string) => notes.remove(id));
+  handle(CHANNELS.noteDelete, (_event, id: string) => notes.remove(id));
 
-  ipcMain.handle(CHANNELS.taskListCreate, () => tasks.create(workspace.active().id));
-  ipcMain.on(CHANNELS.taskListUpdate, (_event, id: string, patch: TaskListPatch) => {
+  handle(CHANNELS.taskListCreate, () => tasks.create(workspace.active().id));
+  on(CHANNELS.taskListUpdate, (_event, id: string, patch: TaskListPatch) => {
     if (typeof patch === 'object' && patch !== null) tasks.update(id, withKnownWorkspace(patch));
   });
-  ipcMain.handle(CHANNELS.taskListDelete, (_event, id: string) => tasks.remove(id));
+  handle(CHANNELS.taskListDelete, (_event, id: string) => tasks.remove(id));
 
-  ipcMain.handle(CHANNELS.textCreate, (_event, x: unknown, y: unknown) =>
+  handle(CHANNELS.textCreate, (_event, x: unknown, y: unknown) =>
     texts.create(Number.isFinite(x) ? (x as number) : 0, Number.isFinite(y) ? (y as number) : 0, workspace.active().id),
   );
-  ipcMain.on(CHANNELS.textUpdate, (_event, id: string, patch: CanvasTextPatch) => {
+  on(CHANNELS.textUpdate, (_event, id: string, patch: CanvasTextPatch) => {
     if (typeof patch === 'object' && patch !== null) texts.update(id, patch);
   });
-  ipcMain.handle(CHANNELS.textDelete, (_event, id: string) => texts.remove(id));
+  handle(CHANNELS.textDelete, (_event, id: string) => texts.remove(id));
 
-  ipcMain.handle(CHANNELS.frameCreate, (_event, rect: unknown) => {
+  handle(CHANNELS.frameCreate, (_event, rect: unknown) => {
     const parsed = parseCanvasRect(rect);
     if (!parsed) throw new Error('Retangulo invalido.');
     return frames.create(parsed, workspace.active().id);
   });
-  ipcMain.on(CHANNELS.frameUpdate, (_event, id: string, patch: CanvasFramePatch) => {
+  on(CHANNELS.frameUpdate, (_event, id: string, patch: CanvasFramePatch) => {
     if (typeof patch === 'object' && patch !== null) frames.update(id, patch);
   });
-  ipcMain.handle(CHANNELS.frameDelete, (_event, id: string) => frames.remove(id));
+  handle(CHANNELS.frameDelete, (_event, id: string) => frames.remove(id));
+}
+
+let shutDown = false;
+
+/** Grava tudo e encerra os terminais. Idempotente: varios caminhos levam aqui. */
+function shutdown(): void {
+  if (shutDown) return;
+  shutDown = true;
+  persistBounds();
+  usage?.stop();
+  output.dispose();
+  terminals?.closeAll();
+  flushData();
+}
+
+/** Grava agora o que esta esperando o debounce. */
+function flushData(): void {
+  workspace?.flush();
+  notes?.flush();
+  texts?.flush();
+  frames?.flush();
+  tasks?.flush();
+}
+
+/**
+ * Itens de um workspace que nao existe mais (config resetado ou editado por
+ * fora) vao para o workspace ativo, em vez de ficarem invisiveis.
+ */
+function adoptOrphans(): void {
+  const validIds = new Set(workspace.current().workspaces.map((item) => item.id));
+  const target = workspace.active().id;
+  notes.adoptOrphans(validIds, target);
+  tasks.adoptOrphans(validIds, target);
+  texts.adoptOrphans(validIds, target);
+  frames.adoptOrphans(validIds, target);
+  if (pendingSession.every((entry) => validIds.has(entry.workspaceId))) return;
+  pendingSession = pendingSession.map((entry) => (validIds.has(entry.workspaceId) ? entry : { ...entry, workspaceId: target }));
+  persistTerminals();
 }
 
 /** Mover para um workspace que nao existe deixaria o item invisivel para sempre. */
@@ -398,6 +490,10 @@ if (!app.requestSingleInstanceLock()) {
     usage = new UsageService(undefined, (summary) => send(CHANNELS.usageUpdate, summary));
 
     pendingSession = workspace.current().terminals;
+    adoptOrphans();
+    const permitted = (permission: string) => ALLOWED_PERMISSIONS.has(permission);
+    session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => callback(permitted(permission)));
+    session.defaultSession.setPermissionCheckHandler((_contents, permission) => permitted(permission));
     registerIpc();
     createWindow();
     usage.start();
@@ -409,15 +505,20 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('window-all-closed', () => app.quit());
 
-  app.on('before-quit', () => {
-    persistBounds();
-    usage?.stop();
-    output.dispose();
-    terminals?.closeAll();
-    workspace?.flush();
-    notes?.flush();
-    texts?.flush();
-    frames?.flush();
-    tasks?.flush();
+  app.on('before-quit', shutdown);
+  // Nenhum destes passa pelo before-quit: sem o flush, as ultimas edicoes
+  // (ainda no debounce) se perderiam.
+  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+    process.on(signal, () => {
+      shutdown();
+      app.quit();
+    });
+  }
+  void app.whenReady().then(() => powerMonitor.on('shutdown', shutdown));
+  // Um erro solto nao derruba os terminais, mas o que esta no debounce ja vai
+  // para o disco, caso o processo morra logo depois.
+  process.on('uncaughtException', (error) => {
+    console.error('[main] erro nao tratado:', error);
+    flushData();
   });
 }

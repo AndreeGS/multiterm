@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { applyNotePatch, createNote, type Note, type NotePatch } from '../../domain/notes/note.js';
 import type { JsonNotesStore } from '../../infrastructure/persistence/json-notes-store.js';
+import { orphanIds } from '../../domain/workspace/workspace.js';
 
 const SAVE_DEBOUNCE_MS = 600;
 
@@ -36,6 +37,17 @@ export class NotesService {
 
   remove(id: string): void {
     if (this.notes.delete(id)) this.scheduleSave();
+  }
+
+  /** Move para `target` o que esta num workspace que nao existe. Devolve quantos. */
+  adoptOrphans(validIds: ReadonlySet<string>, target: string): number {
+    const ids = orphanIds(this.notes.values(), validIds);
+    for (const id of ids) {
+      const item = this.notes.get(id);
+      if (item) this.notes.set(id, { ...item, workspaceId: target });
+    }
+    if (ids.length > 0) this.scheduleSave();
+    return ids.length;
   }
 
   /** Apaga tudo de um workspace que esta sendo removido. */
