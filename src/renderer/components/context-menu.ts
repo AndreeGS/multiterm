@@ -6,6 +6,10 @@ export interface MenuItem {
   readonly hint?: string;
   readonly disabled?: boolean;
   readonly danger?: boolean;
+  /** Miniatura a esquerda do texto. */
+  readonly icon?: Element;
+  /** Opcao em uso: marcada e focada ao abrir. */
+  readonly checked?: boolean;
   readonly run: () => void;
 }
 
@@ -38,6 +42,9 @@ export function openContextMenu(x: number, y: number, entries: MenuEntry[]): voi
     item.setAttribute('role', 'menuitem');
     item.disabled = entry.disabled ?? false;
     item.classList.toggle('danger', entry.danger ?? false);
+    item.classList.toggle('checked', entry.checked ?? false);
+    if (entry.checked) item.setAttribute('aria-current', 'true');
+    if (entry.icon) item.append(entry.icon);
     const label = el('span', 'context-menu-label');
     label.textContent = entry.label;
     item.append(label);
@@ -59,7 +66,7 @@ export function openContextMenu(x: number, y: number, entries: MenuEntry[]): voi
   const { offsetWidth: width, offsetHeight: height } = menu;
   menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - width - 4))}px`;
   menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - height - 4))}px`;
-  buttons[0]?.focus();
+  (buttons.find((node) => node.classList.contains('checked')) ?? buttons[0])?.focus();
 
   const onOutside = (event: MouseEvent) => {
     if (!menu.contains(event.target as Node)) close();
