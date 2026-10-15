@@ -17,6 +17,38 @@ tem o seu shell real, com indicador de atividade.
 
 ## Instalacao
 
+### Pelo pacote (recomendado)
+
+Baixe o `.deb` ou o `.AppImage` da pagina de
+[Releases](https://github.com/AndreeGS/multiterm/releases) — nao precisa de
+Node, git nem compilador.
+
+**Debian / Ubuntu (.deb)** — instala em `/opt/MultiTerm`, poe o MultiTerm no
+menu e o comando `multiterm` no PATH, com o sandbox do Chromium configurado:
+
+```bash
+sudo apt install ./multiterm_0.1.0_amd64.deb
+```
+
+**Qualquer distro (AppImage)** — um arquivo so, sem instalar:
+
+```bash
+chmod +x MultiTerm-0.1.0-x86_64.AppImage
+./MultiTerm-0.1.0-x86_64.AppImage
+```
+
+No Ubuntu 22.04+ o AppImage precisa da libfuse2 (`sudo apt install libfuse2t64`
+no 24.04, `libfuse2` no 22.04); sem ela, prefira o `.deb`.
+
+Seus dados (`~/.config/multiterm`) sao os mesmos em qualquer forma de
+instalacao. Se voce usava o `npm run app:install`, rode `npm run app:uninstall`
+antes: o atalho dele, em `~/.local`, tem prioridade sobre o do pacote.
+
+Para gerar os pacotes localmente: `npm run dist` (saem em `release/`). Uma tag
+`v*` publicada no GitHub gera a Release automaticamente.
+
+### A partir do codigo
+
 ```bash
 npm install       # compila o node-pty para o ABI do Electron (postinstall)
 npm run app:install
@@ -516,7 +548,7 @@ Regras que mantem o acoplamento baixo:
 
 - Atividade mais precisa usando o processo em foreground do PTY (`IPty.process`,
   ja usado para confirmar ao fechar) em vez de so o fluxo de bytes.
-- Instalador (electron-builder: AppImage/deb) e validacao em macOS e Windows.
+- Pacotes para macOS e Windows (o electron-builder ja esta configurado so para Linux).
 - Quebrar o `renderer/app.ts` em controladores (vinculos, atencao, paleta,
   workspaces) e uma base comum para os paineis de nota e de tarefas.
 - Teste de ponta a ponta da interface (Playwright + Electron) no CI.

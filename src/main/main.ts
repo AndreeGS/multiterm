@@ -524,6 +524,17 @@ function withKnownWorkspace<T extends { workspaceId?: string }>(patch: T): T {
   return rest as T;
 }
 
+// Dados sempre em ~/.config/multiterm (ou o equivalente do SO). Sem isto o
+// caminho sai do nome do app, e o empacotado se chama "MultiTerm": no Linux
+// seria outra pasta, e o app instalado abriria sem nada do que voce tinha.
+app.setPath('userData', join(app.getPath('appData'), 'multiterm'));
+
+// O AppImage e montado sem setuid, entao o sandbox de setuid do Chromium nunca
+// funciona nele (e em varias distros o de user namespaces esta bloqueado). Sem
+// isto ele aborta ao abrir — o mesmo que o bin/multiterm faz para o `npm start`.
+// O renderer continua com `sandbox: true` e contextIsolation.
+if (process.env.APPIMAGE) app.commandLine.appendSwitch('no-sandbox');
+
 // Uma unica instancia: abrir de novo apenas foca a janela existente.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
