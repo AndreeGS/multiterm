@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // O renderer roda no Chromium sem acesso a Node (contextIsolation): sem os
+    // tipos do Node, um `require` ou `process` aqui nem compila.
+    "types": []
+  },
+  "include": ["src/renderer"]
+}

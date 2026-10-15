@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { WorktreeService } from '../../application/git/worktree-service.js';
 import { isValidBranchName, suggestBranch } from '../../domain/git/branch.js';
-import { parseWorktreeInfo, parseWorktreeList, worktreePath } from '../../domain/git/worktree.js';
+import { parseWorktreeInfo, parseWorktreeList } from '../../domain/git/worktree.js';
+import { worktreePath } from '../../domain/git/worktree-path.js';
 import { parseConfig } from '../../domain/workspace/config.js';
 import { GitCli } from '../../infrastructure/git/git-cli.js';
 

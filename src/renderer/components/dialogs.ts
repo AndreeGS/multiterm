@@ -1,3 +1,5 @@
+import { trapFocus } from './modal.js';
+
 /**
  * Confirmacao e aviso dentro da propria janela. Os nativos (`window.confirm`,
  * `window.alert`) do Electron bloqueiam o renderer e, no Linux, podem nunca
@@ -67,6 +69,7 @@ function showDialog(title: string, message: string | undefined, buttons: DialogB
     modal.append(actions);
     overlay.append(modal);
     document.body.append(overlay);
+    trapFocus(overlay);
 
     let settled = false;
     function close(value: boolean): void {
@@ -90,6 +93,6 @@ function showDialog(title: string, message: string | undefined, buttons: DialogB
       if (event.target === overlay) close(false);
     });
     document.addEventListener('keydown', onKey, true);
-    (primary as HTMLButtonElement | null)?.focus();
+    primary?.focus();
   });
 }

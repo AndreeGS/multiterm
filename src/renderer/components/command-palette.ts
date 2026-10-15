@@ -1,3 +1,5 @@
+import { trapFocus } from './modal.js';
+
 export interface PaletteItem {
   readonly label: string;
   /** Texto secundario (diretorio, tipo do painel...). Tambem entra na busca. */
@@ -31,6 +33,7 @@ export function openPalette(items: PaletteItem[], placeholder: string): Promise<
     modal.append(input, list);
     overlay.append(modal);
     document.body.append(overlay);
+    trapFocus(overlay);
 
     let visible: PaletteItem[] = items;
     let selected = 0;

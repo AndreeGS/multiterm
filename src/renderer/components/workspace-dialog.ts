@@ -1,5 +1,6 @@
 import { MAX_WORKSPACE_NAME } from '../../domain/workspace/workspace.js';
 import { el } from './panel.js';
+import { trapFocus } from './modal.js';
 
 /** Um workspace na lista, com o que o App sabe dele. */
 export interface WorkspaceRow {
@@ -46,6 +47,7 @@ export function openWorkspaceDialog(rows: WorkspaceRow[], canCreate: boolean): P
     modal.append(heading, list, createRow);
     overlay.append(modal);
     document.body.append(overlay);
+    trapFocus(overlay);
 
     let settled = false;
     const close = (action: WorkspaceAction | null) => {
