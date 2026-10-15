@@ -75,6 +75,14 @@ export class TerminalService {
     this.sessions.get(id)?.acknowledge();
   }
 
+  pause(id: string): void {
+    this.sessions.get(id)?.pause();
+  }
+
+  resume(id: string): void {
+    this.sessions.get(id)?.resume();
+  }
+
   interrupt(id: string): void {
     this.sessions.get(id)?.interrupt();
   }

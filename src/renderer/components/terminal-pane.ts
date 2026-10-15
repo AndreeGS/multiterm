@@ -1,5 +1,6 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import type { TerminalSnapshot } from '../../domain/terminal/types.js';
 import { totalTokens, type UsageTotals } from '../../domain/usage/types.js';
@@ -19,6 +20,18 @@ const STATUS_LABEL: Record<TerminalSnapshot['status'], string> = {
   exited: 'finalizado',
   error: 'erro',
 };
+
+/**
+ * Terminais com renderizador WebGL ao mesmo tempo. O Chromium derruba o
+ * contexto mais antigo acima de ~16; o resto usa o renderizador DOM.
+ */
+const MAX_WEBGL = 12;
+let webglInUse = 0;
+
+/** Espera do tamanho final antes de avisar o pty: cada resize e um SIGWINCH e um redesenho da TUI. */
+const PTY_RESIZE_DELAY_MS = 80;
+/** Confirmacoes de output desenhado vao agrupadas neste intervalo. */
+const ACK_INTERVAL_MS = 50;
 
 export interface PaneCallbacks {
   onFocus(id: string): void;
@@ -58,6 +71,13 @@ export class TerminalPane implements Panel {
   private fontSize: number;
   private scale = 1;
   private sending: Promise<void> = Promise.resolve();
+  private webgl: WebglAddon | null = null;
+  /** Frame agendado para o fit (varios pedidos no mesmo frame viram um). */
+  private fitFrame = 0;
+  private resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Bytes ja desenhados ainda nao confirmados ao main (vao juntos, a cada ~50ms). */
+  private unacked = 0;
+  private ackTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     snapshot: TerminalSnapshot,
@@ -125,9 +145,9 @@ export class TerminalPane implements Panel {
     // URLs soltas no texto: o handler padrao tambem abriria uma janela vazia.
     this.term.loadAddon(new WebLinksAddon((_event, uri) => this.api.openExternal(uri)));
     this.term.open(body);
+    this.loadWebgl();
 
     this.term.onData((data) => this.api.writeTerminal(this.id, data));
-    this.term.onResize(({ cols, rows }) => this.api.resizeTerminal(this.id, cols, rows));
     this.term.attachCustomKeyEventHandler((event) => this.handleKey(event));
 
     this.observer = new ResizeObserver(() => this.refit());
@@ -238,8 +258,20 @@ export class TerminalPane implements Panel {
     this.term.focus();
   }
 
-  /** Reajusta o xterm ao tamanho do painel; chamado em resize e troca de layout. */
+  /**
+   * Reajusta o xterm ao tamanho do painel; chamado em resize e troca de layout.
+   * Agendado para o proximo frame: arrastar um divisor dispara dezenas de
+   * pedidos, e so o ultimo tamanho importa.
+   */
   refit(): void {
+    if (this.fitFrame) return;
+    this.fitFrame = requestAnimationFrame(() => {
+      this.fitFrame = 0;
+      this.fitNow();
+    });
+  }
+
+  private fitNow(): void {
     if (!this.element.isConnected || this.element.clientHeight === 0) return;
     try {
       this.fit.fit();
@@ -248,9 +280,38 @@ export class TerminalPane implements Panel {
       return;
     }
     const { cols, rows } = this.term;
-    if (cols !== this.lastSize.cols || rows !== this.lastSize.rows) {
-      this.lastSize = { cols, rows };
-      this.api.resizeTerminal(this.id, cols, rows);
+    if (cols === this.lastSize.cols && rows === this.lastSize.rows) return;
+    this.lastSize = { cols, rows };
+    if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    this.resizeTimer = setTimeout(() => {
+      this.resizeTimer = null;
+      this.api.resizeTerminal(this.id, this.lastSize.cols, this.lastSize.rows);
+    }, PTY_RESIZE_DELAY_MS);
+  }
+
+  /** GPU quando ha contexto sobrando; se o contexto se perder, volta ao DOM. */
+  private loadWebgl(): void {
+    if (webglInUse >= MAX_WEBGL) return;
+    try {
+      const addon = new WebglAddon();
+      addon.onContextLoss(() => this.disposeWebgl());
+      this.term.loadAddon(addon);
+      this.webgl = addon;
+      webglInUse++;
+    } catch {
+      // sem WebGL (GPU bloqueada, --disable-gpu): fica no renderizador DOM
+    }
+  }
+
+  private disposeWebgl(): void {
+    if (!this.webgl) return;
+    const addon = this.webgl;
+    this.webgl = null;
+    webglInUse--;
+    try {
+      addon.dispose();
+    } catch {
+      // contexto ja perdido
     }
   }
 
@@ -288,13 +349,33 @@ export class TerminalPane implements Panel {
       this.early.push([data, seq]);
       return;
     }
-    if (seq <= this.lastSeq) return;
+    if (seq <= this.lastSeq) {
+      this.ack(data.length);
+      return;
+    }
     this.lastSeq = seq;
-    this.term.write(data);
+    this.term.write(data, () => this.ack(data.length));
+  }
+
+  /** Controle de fluxo: o main pausa o pty se o xterm ficar muito para tras. */
+  private ack(bytes: number): void {
+    this.unacked += bytes;
+    this.ackTimer ??= setTimeout(() => {
+      this.ackTimer = null;
+      const total = this.unacked;
+      this.unacked = 0;
+      this.api.ackOutput(this.id, total);
+    }, ACK_INTERVAL_MS);
   }
 
   dispose(): void {
     this.observer.disconnect();
+    if (this.fitFrame) cancelAnimationFrame(this.fitFrame);
+    if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    if (this.ackTimer) clearTimeout(this.ackTimer);
+    // O terminal pode seguir vivo sem este painel: nao deixa o pty pausado.
+    if (this.unacked > 0) this.api.ackOutput(this.id, this.unacked);
+    this.disposeWebgl();
     this.term.dispose();
     this.element.remove();
   }

@@ -194,6 +194,8 @@ export class App {
       for (const [id, data, seq] of batch) {
         const pane = this.panes.get(id);
         if (pane instanceof TerminalPane) pane.write(data, seq);
+        // Sem painel ninguem vai desenhar: confirma ja, senao o pty pausaria.
+        else this.api.ackOutput(id, data.length);
       }
     });
     this.api.onTerminalUpdate((snapshot) => {
@@ -212,10 +214,6 @@ export class App {
     // Voltar para a janela ja conta como "vi o terminal em foco".
     window.addEventListener('focus', () => {
       if (this.focusedId) this.acknowledge(this.focusedId);
-    });
-
-    window.addEventListener('resize', () => {
-      for (const pane of this.board.visiblePanes()) pane.refit();
     });
 
     window.addEventListener('keydown', (event) => {
@@ -297,6 +295,7 @@ export class App {
    * rodando (e avisando). `focusId` = painel a focar depois.
    */
   private async switchWorkspace(id: string, focusId?: string): Promise<void> {
+    this.canvas.flushView();
     if (id !== this.activeWorkspace) this.applyWorkspace(await this.api.switchWorkspace(id));
     const target = focusId ?? (this.focusedId && this.visibleIds().includes(this.focusedId) ? this.focusedId : this.visibleIds()[0]);
     if (target) this.goTo(target);
@@ -378,6 +377,7 @@ export class App {
    * era o em uso, o main passa a usar outro e a tela vai junto.
    */
   private async deleteWorkspace(id: string): Promise<void> {
+    this.canvas.flushView();
     const wasActive = id === this.activeWorkspace;
     const panes = this.order.map((paneId) => this.panes.get(paneId)!).filter((pane) => pane.workspaceId === id);
     const next = await this.api.deleteWorkspace(id);
@@ -927,6 +927,7 @@ export class App {
   }
 
   private applyUsageSummary(summary: UsageSummary): void {
+    this.toolbar.setUsage(summary);
     this.usageBySession = summary.bySession;
     for (const pane of this.terminalPanes(true)) this.applyUsage(pane);
   }

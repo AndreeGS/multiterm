@@ -57,6 +57,7 @@ import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
 import { hasClaudeTranscript, hasProjectConversations } from '../infrastructure/usage/claude-paths.js';
 import { CHANNELS, type BootstrapState, type RestoredSession } from '../shared/contract.js';
 import { AttentionNotifier } from './attention.js';
+import { FlowControl } from './flow-control.js';
 import { OutputBatcher } from './output-batcher.js';
 
 let mainWindow: BrowserWindow | null = null;
@@ -69,7 +70,31 @@ let texts: TextsService;
 let frames: FramesService;
 let tasks: TasksService;
 const worktrees = new WorktreeService(new GitCli());
-const output = new OutputBatcher((batch) => send(CHANNELS.data, batch));
+const flow = new FlowControl();
+const output = new OutputBatcher((batch) => {
+  send(CHANNELS.data, batch);
+  for (const [id, data] of batch) {
+    if (flow.sent(id, data.length)) pauseOutput(id);
+  }
+});
+/** Pausas sem confirmacao do renderer por mais que isto sao desfeitas (nunca trava um terminal). */
+const FLOW_STALL_MS = 5000;
+const stallTimers = new Map<string, NodeJS.Timeout>();
+
+function pauseOutput(id: string): void {
+  terminals.pause(id);
+  clearTimeout(stallTimers.get(id));
+  stallTimers.set(id, setTimeout(() => {
+    flow.forget(id);
+    resumeOutput(id);
+  }, FLOW_STALL_MS));
+}
+
+function resumeOutput(id: string): void {
+  clearTimeout(stallTimers.get(id));
+  stallTimers.delete(id);
+  terminals.resume(id);
+}
 /** Posicao de cada terminal na area livre. Vive aqui porque a sessao nao sabe de layout. */
 const terminalRects = new Map<string, CanvasRect>();
 /**
@@ -194,8 +219,15 @@ function persistTerminals(): void {
     workspaceId: snapshot.workspaceId,
     rect: terminalRects.get(snapshot.id) ?? null,
   }));
-  workspace.setTerminals([...live, ...pendingSession]);
+  const next = [...live, ...pendingSession];
+  // Mudancas de status (executando/ocioso, varias por segundo) chegam aqui
+  // tambem, mas nao mudam nada do que e salvo: nao reescreve o config por elas.
+  const signature = JSON.stringify(next);
+  if (signature === persistedTerminals) return;
+  persistedTerminals = signature;
+  workspace.setTerminals(next);
 }
+let persistedTerminals = '';
 
 function restoreSession(): RestoredSession {
   const saved = pendingSession;
@@ -241,6 +273,8 @@ function resumeCommand(command: string, cwd: string): string {
 
 function registerIpc(): void {
   handle(CHANNELS.bootstrap, (): BootstrapState => {
+    // Renderer novo (ou recarregado): o que estava em voo nunca sera confirmado.
+    for (const id of flow.reset()) resumeOutput(id);
     const config = workspace.current();
     const active = workspace.active();
     return {
@@ -364,6 +398,11 @@ function registerIpc(): void {
     if (parsed) terminalRects.set(id, parsed);
     else terminalRects.delete(id);
     persistTerminals();
+  });
+  on(CHANNELS.ackOutput, (_event, id: unknown, bytes: unknown) => {
+    if (typeof id !== 'string' || !Number.isFinite(bytes)) return;
+    if (flow.acked(id, bytes as number)) resumeOutput(id);
+    else if (flow.isPaused(id)) pauseOutput(id); // ainda alcancando: renova o prazo
   });
   on(CHANNELS.openExternal, (_event, url: unknown) => {
     if (isSafeExternalUrl(url)) void shell.openExternal(url);
@@ -508,6 +547,9 @@ if (!app.requestSingleInstanceLock()) {
       onClose: (id) => {
         attention.forget(id);
         terminalRects.delete(id);
+        flow.forget(id);
+        clearTimeout(stallTimers.get(id));
+        stallTimers.delete(id);
         persistTerminals();
         output.flush();
         send(CHANNELS.closed, id);

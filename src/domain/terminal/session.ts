@@ -191,6 +191,15 @@ export class TerminalSession {
     this.pty?.resize(size);
   }
 
+  /** Controle de fluxo do output: a tela ficou para tras / alcancou. */
+  pause(): void {
+    this.pty?.pause();
+  }
+
+  resume(): void {
+    this.pty?.resume();
+  }
+
   /** Interrompe o processo em foreground sem matar a sessao (Ctrl-C). */
   interrupt(): void {
     this.pty?.write('\x03');
