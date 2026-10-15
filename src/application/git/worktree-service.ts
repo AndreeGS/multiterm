@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { isValidBranchName } from '../../domain/git/branch.js';
-import { worktreePath, type Git, type GitInfo, type WorktreeInfo } from '../../domain/git/worktree.js';
+import type { Git, GitInfo, WorktreeInfo } from '../../domain/git/worktree.js';
+import { worktreePath } from '../../domain/git/worktree-path.js';
 
 /**
  * Caso de uso: worktrees por terminal. Cria a pasta isolada antes do terminal

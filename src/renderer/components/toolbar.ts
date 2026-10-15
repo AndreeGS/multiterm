@@ -1,6 +1,7 @@
 import type { UsageSummary } from '../../domain/usage/types.js';
 import { gridTemplate, LAYOUTS, type LayoutId } from '../../domain/workspace/layout.js';
 import type { MultiTermApi } from '../../shared/contract.js';
+import { openContextMenu } from './context-menu.js';
 import { UsageBar } from './usage-bar.js';
 
 export interface ToolbarCallbacks {
@@ -23,7 +24,8 @@ export interface ToolbarCallbacks {
 export class Toolbar {
   readonly element = document.createElement('div');
   private readonly usage: UsageBar;
-  private readonly layoutButtons = new Map<LayoutId, HTMLButtonElement>();
+  private readonly layoutBtn = document.createElement('button');
+  private layout: LayoutId = 'free';
   private readonly pageGroup = document.createElement('div');
   private readonly pageLabel = document.createElement('span');
   private readonly prevBtn: HTMLButtonElement;
@@ -69,21 +71,19 @@ export class Toolbar {
     tasksBtn.title = 'Nova lista de tarefas (Ctrl+Shift+L)';
     tasksBtn.addEventListener('click', () => this.callbacks.onNewTaskList());
 
-    const layoutGroup = document.createElement('div');
-    layoutGroup.className = 'group';
-    const layoutLabel = document.createElement('span');
-    layoutLabel.className = 'label';
-    layoutLabel.textContent = 'Layout';
-    layoutGroup.appendChild(layoutLabel);
-    for (const layout of LAYOUTS) {
-      const btn = document.createElement('button');
-      btn.className = 'layout-btn';
-      btn.append(layoutIcon(layout));
-      btn.title = LAYOUT_TITLES[layout];
-      btn.addEventListener('click', () => this.callbacks.onLayout(layout));
-      this.layoutButtons.set(layout, btn);
-      layoutGroup.appendChild(btn);
-    }
+    // Um botao so com o layout atual; as opcoes abrem num menu.
+    this.layoutBtn.className = 'layout-btn layout-picker';
+    this.layoutBtn.setAttribute('aria-haspopup', 'menu');
+    this.layoutBtn.addEventListener('click', () => {
+      const box = this.layoutBtn.getBoundingClientRect();
+      openContextMenu(box.left, box.bottom + 4, LAYOUTS.map((layout) => ({
+        label: LAYOUT_NAMES[layout],
+        hint: LAYOUT_HINTS[layout],
+        icon: layoutIcon(layout),
+        checked: layout === this.layout,
+        run: () => this.callbacks.onLayout(layout),
+      })));
+    });
 
     this.pageGroup.className = 'group';
     this.prevBtn = pagerButton('‹', () => this.callbacks.onPage(-1));
@@ -127,7 +127,7 @@ export class Toolbar {
       spacer,
       usage.element,
       this.pageGroup,
-      layoutGroup,
+      this.layoutBtn,
       settingsBtn,
     );
   }
@@ -137,9 +137,14 @@ export class Toolbar {
 
 
   setLayout(layout: LayoutId): void {
-    for (const [id, btn] of this.layoutButtons) {
-      btn.classList.toggle('active', id === layout);
-    }
+    this.layout = layout;
+    const name = document.createElement('span');
+    name.textContent = LAYOUT_NAMES[layout];
+    const caret = document.createElement('span');
+    caret.className = 'caret';
+    caret.textContent = '▾';
+    this.layoutBtn.replaceChildren(layoutIcon(layout), name, caret);
+    this.layoutBtn.title = `Layout: ${LAYOUT_TITLES[layout]}`;
   }
 
   /** Workspace em uso; `elsewhere` = algum terminal de outro workspace aguarda voce. */
@@ -179,6 +184,27 @@ export class Toolbar {
     this.nextBtn.disabled = page >= pageCount - 1;
   }
 }
+
+const LAYOUT_NAMES: Record<LayoutId, string> = {
+  '1': '1 painel',
+  '2': '2 lado a lado',
+  '3': '3 paineis',
+  '4': 'Grade 2x2',
+  '6': 'Grade 3x2',
+  '8': 'Grade 4x2',
+  free: 'Area livre',
+};
+
+/** Detalhe curto no menu, a direita do nome. */
+const LAYOUT_HINTS: Record<LayoutId, string> = {
+  '1': 'um por tela',
+  '2': 'dois por tela',
+  '3': '1 grande + 2',
+  '4': 'quatro por tela',
+  '6': 'seis por tela',
+  '8': 'oito por tela',
+  free: 'arraste a vontade',
+};
 
 const LAYOUT_TITLES: Record<LayoutId, string> = {
   '1': '1 painel por tela',

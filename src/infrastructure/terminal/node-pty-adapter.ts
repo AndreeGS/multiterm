@@ -61,7 +61,7 @@ export class NodePtyFactory implements PtyFactory {
       cols: size.cols,
       rows: size.rows,
       cwd,
-      env: env as Record<string, string>,
+      env,
       // Melhora o throughput de agentes que imprimem muito (Linux/macOS).
       useConpty: process.platform === 'win32' ? true : undefined,
     });

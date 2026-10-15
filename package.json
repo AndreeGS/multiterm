@@ -4,10 +4,14 @@
   "description": "Central visual para executar e acompanhar varios terminais/agentes simultaneamente",
   "license": "MIT",
   "main": "dist/main/main.js",
+  "engines": {
+    "node": ">=22"
+  },
   "private": true,
   "scripts": {
     "build": "node scripts/build.mjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.renderer.json",
+    "lint": "eslint .",
     "test": "node scripts/build.mjs --tests && node --test 'dist/test/unit/*.test.js'",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
@@ -30,8 +34,10 @@
   "devDependencies": {
     "@electron/rebuild": "^3.6.0",
     "@types/node": "^22.10.0",
-    "electron": "^33.2.0",
+    "electron": "^44.5.1",
     "esbuild": "^0.24.0",
-    "typescript": "^5.7.2"
+    "eslint": "^9.39.5",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.71.2"
   }
 }

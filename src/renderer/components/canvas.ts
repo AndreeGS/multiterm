@@ -398,9 +398,10 @@ export class CanvasBoard implements Board {
   private applyWorldTransform(): void {
     const { x, y, zoom } = this.view;
     const factor = zoom / this.renderedZoom;
-    this.world.style.transform = factor === 1
-      ? `translate(${x}px, ${y}px)`
-      : `translate(${x}px, ${y}px) scale(${factor})`;
+    // Em pixel inteiro: o terminal (WebGL) e um canvas, e um canvas num
+    // deslocamento fracionario e reamostrado pelo navegador — o texto borra.
+    const at = `translate(${snapToPixel(x)}px, ${snapToPixel(y)}px)`;
+    this.world.style.transform = factor === 1 ? at : `${at} scale(${factor})`;
   }
 
   private attach(pane: Panel): void {
@@ -486,11 +487,15 @@ export class CanvasBoard implements Board {
   /** Converte o retangulo do mundo para pixels na tela, conforme o zoom. */
   private place(pane: Panel, rect: CanvasRect): void {
     const { zoom } = this.view;
+    // Bordas em pixel inteiro (ver applyWorldTransform); largura e altura
+    // saem das bordas arredondadas, para o painel nao oscilar 1px.
+    const left = snapToPixel(rect.x * zoom);
+    const top = snapToPixel(rect.y * zoom);
     Object.assign(pane.element.style, {
-      left: `${rect.x * zoom}px`,
-      top: `${rect.y * zoom}px`,
-      width: `${rect.width * zoom}px`,
-      height: `${rect.height * zoom}px`,
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${snapToPixel((rect.x + rect.width) * zoom) - left}px`,
+      height: `${snapToPixel((rect.y + rect.height) * zoom) - top}px`,
     });
   }
 
@@ -543,4 +548,10 @@ export class CanvasBoard implements Board {
       if (resized !== start) pane.canvasRect = resized;
     });
   }
+}
+
+/** Arredonda para o pixel fisico da tela (com escala do sistema, 1px CSS != 1px). */
+function snapToPixel(value: number): number {
+  const ratio = window.devicePixelRatio || 1;
+  return Math.round(value * ratio) / ratio;
 }

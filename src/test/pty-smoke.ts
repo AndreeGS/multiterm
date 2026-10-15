@@ -181,5 +181,9 @@ void app.whenReady().then(async () => {
     failures.push('excecao nao tratada');
   }
   console.log(failures.length === 0 ? '\nTODOS OS TESTES PASSARAM' : `\n${failures.length} FALHA(S)`);
+  // Sair com ptys recem-mortos faz o callback de exit do node-pty rodar
+  // durante o teardown e abortar o processo (SIGABRT), o que derrubaria o
+  // codigo de saida no CI. Um respiro deixa os exits chegarem antes.
+  await new Promise((resolve) => setTimeout(resolve, 500));
   app.exit(failures.length === 0 ? 0 : 1);
 });

@@ -16,15 +16,23 @@ APP_DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
 
 cd "$APP_DIR"
 
-# Primeira execucao (ou apos git pull) ainda nao tem bundle.
-if [ ! -f dist/main/main.js ]; then
-  npm run build
+# Sem dependencias o erro do Electron seria obscuro: diz o que fazer.
+if [ ! -x node_modules/.bin/electron ]; then
+  echo "multiterm: dependencias ausentes. Rode 'npm install' em $APP_DIR" >&2
+  exit 1
+fi
+
+# Primeira execucao ainda nao tem bundle; depois de um git pull o bundle fica
+# velho. Recompila se algum fonte for mais novo que ele.
+if [ ! -f dist/main/main.js ] || [ -n "$(find src scripts/build.mjs -newer dist/main/main.js -print -quit)" ]; then
+  npm run build >&2
 fi
 
 ARGS=()
 # O chrome-sandbox so funciona com setuid root. Sem isso o Chromium aborta —
 # entao caimos para --no-sandbox em vez de falhar na cara do usuario.
 if [ ! -u node_modules/electron/dist/chrome-sandbox ]; then
+  echo "multiterm: chrome-sandbox sem setuid root; rodando com --no-sandbox (veja o README para ativar)" >&2
   ARGS+=(--no-sandbox)
 fi
 

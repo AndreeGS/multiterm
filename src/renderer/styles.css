@@ -162,15 +162,24 @@ button.primary:hover:not(:disabled) { background: var(--primary-hover); border-c
   min-width: 32px;
   padding: 4px 6px;
 }
-.layout-btn.active { background: var(--primary-bg); border-color: var(--primary-border); }
 .layout-icon rect {
   fill: none;
   stroke: var(--fg-dim);
   stroke-width: 1;
 }
-.layout-btn:hover .layout-icon rect,
-.layout-btn.active .layout-icon rect { stroke: var(--fg); }
-.layout-btn.active .layout-icon rect { fill: var(--layout-fill); stroke: var(--primary-fg); }
+.layout-btn:hover .layout-icon rect { stroke: var(--fg); }
+.layout-picker {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 8px;
+}
+.layout-picker .caret { color: var(--fg-dim); font-size: 10px; }
+/* Opcoes de layout no menu: miniatura + nome; a atual em destaque. */
+.context-menu-item .layout-icon { flex: none; }
+.context-menu-item:hover .layout-icon rect { stroke: var(--fg); }
+.context-menu-item.checked { background: var(--primary-bg); color: var(--primary-fg); }
+.context-menu-item.checked .layout-icon rect { fill: var(--layout-fill); stroke: var(--primary-fg); }
 .settings-btn { font-size: 15px; line-height: 1; padding: 3px 8px; color: var(--fg-dim); }
 .settings-btn:hover:not(:disabled) { color: var(--fg); }
 
