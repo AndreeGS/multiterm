@@ -19,12 +19,10 @@ export class UsageBar {
     this.element.append(this.todayEl, divider(), this.weekEl);
 
     this.element.addEventListener('click', () => this.api.refreshUsage());
-
-    this.api.onUsageUpdate((summary) => this.render(summary));
-    void this.api.getUsage().then((summary) => this.render(summary));
   }
 
-  private render(summary: UsageSummary): void {
+  /** O App busca e assina o resumo uma vez so e repassa para ca. */
+  render(summary: UsageSummary): void {
     if (!summary.available) {
       this.element.hidden = true;
       return;

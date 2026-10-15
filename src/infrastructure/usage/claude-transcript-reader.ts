@@ -26,7 +26,8 @@ const DAYS_KEPT = 8;
  */
 export class ClaudeTranscriptReader {
   private readonly cursors = new Map<string, FileCursor>();
-  private readonly seen = new Set<string>();
+  /** Respostas ja contadas, com o dia de cada uma (para podar junto com `daily`). */
+  private readonly seen = new Map<string, string>();
   private readonly daily: DailyUsage = new Map();
   /** Totais de cada conversa, desde o inicio do arquivo (nao so a janela de dias). */
   private readonly sessions = new Map<string, UsageTotals>();
@@ -54,7 +55,13 @@ export class ClaudeTranscriptReader {
   /** Incorpora o que surgiu desde a ultima chamada e devolve o mapa por dia. */
   async refresh(): Promise<DailyUsage> {
     const cutoff = Date.now() - DAYS_KEPT * 24 * 60 * 60 * 1000;
-    for (const file of await this.listTranscripts()) {
+    const files = await this.listTranscripts();
+    // Arquivo apagado: o cursor dele nunca mais seria usado.
+    const present = new Set(files);
+    for (const file of this.cursors.keys()) {
+      if (!present.has(file)) this.cursors.delete(file);
+    }
+    for (const file of files) {
       try {
         const info = await stat(file);
         // Arquivo sem escrita na janela de interesse nao tem nada novo e util.
@@ -104,9 +111,10 @@ export class ClaudeTranscriptReader {
       pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
       let newline = pending.indexOf(NEWLINE);
       while (newline >= 0) {
-        const line = pending.toString('utf8', 0, newline);
         cursor.offset += newline + 1;
-        if (line.length > 0) this.accept(line, file);
+        // So linhas com `usage` interessam; o resto (tool results de varios MB)
+        // nem vira string nem passa pelo JSON.parse.
+        if (pending.subarray(0, newline).includes(USAGE_MARK)) this.accept(pending.toString('utf8', 0, newline), file);
         pending = pending.subarray(newline + 1);
         newline = pending.indexOf(NEWLINE);
       }
@@ -120,7 +128,7 @@ export class ClaudeTranscriptReader {
     // A mesma resposta pode aparecer em mais de um arquivo (retomadas, sidechains).
     if (record.key !== null) {
       if (this.seen.has(record.key)) return;
-      this.seen.add(record.key);
+      this.seen.set(record.key, record.day);
     }
 
     if (!priceOf(record.model)) this.unpriced.add(record.model);
@@ -142,7 +150,11 @@ export class ClaudeTranscriptReader {
     for (const day of this.daily.keys()) {
       if (day < oldest) this.daily.delete(day);
     }
+    for (const [key, day] of this.seen) {
+      if (day < oldest) this.seen.delete(key);
+    }
   }
 }
 
 const NEWLINE = 0x0a;
+const USAGE_MARK = Buffer.from('"usage"');

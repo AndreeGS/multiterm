@@ -69,6 +69,8 @@ class FakePty implements Pty {
   write(data: string): void {
     this.written.push(data);
   }
+  pause(): void {}
+  resume(): void {}
   resize(): void {}
   kill(): void {}
   onData(listener: (chunk: string) => void): void {

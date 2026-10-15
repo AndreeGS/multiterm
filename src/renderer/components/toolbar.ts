@@ -1,3 +1,4 @@
+import type { UsageSummary } from '../../domain/usage/types.js';
 import { gridTemplate, LAYOUTS, type LayoutId } from '../../domain/workspace/layout.js';
 import type { MultiTermApi } from '../../shared/contract.js';
 import { UsageBar } from './usage-bar.js';
@@ -21,6 +22,7 @@ export interface ToolbarCallbacks {
 
 export class Toolbar {
   readonly element = document.createElement('div');
+  private readonly usage: UsageBar;
   private readonly layoutButtons = new Map<LayoutId, HTMLButtonElement>();
   private readonly pageGroup = document.createElement('div');
   private readonly pageLabel = document.createElement('span');
@@ -106,7 +108,7 @@ export class Toolbar {
     const spacer = document.createElement('div');
     spacer.className = 'spacer';
 
-    const usage = new UsageBar(api);
+    const usage = (this.usage = new UsageBar(api));
 
     const settingsBtn = document.createElement('button');
     settingsBtn.className = 'settings-btn';
@@ -129,6 +131,10 @@ export class Toolbar {
       settingsBtn,
     );
   }
+  setUsage(summary: UsageSummary): void {
+    this.usage.render(summary);
+  }
+
 
   setLayout(layout: LayoutId): void {
     for (const [id, btn] of this.layoutButtons) {

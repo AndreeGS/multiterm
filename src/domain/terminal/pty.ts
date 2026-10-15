@@ -10,6 +10,9 @@ export interface Pty {
   resize(size: TerminalSize): void;
   /** Envia um sinal ao processo (SIGINT, SIGTERM, ...). */
   kill(signal?: NodeJS.Signals): void;
+  /** Para de ler o output (controle de fluxo); o programa bloqueia ao escrever. */
+  pause(): void;
+  resume(): void;
   onData(listener: (chunk: string) => void): void;
   onExit(listener: (exitCode: number, signal?: number) => void): void;
 }

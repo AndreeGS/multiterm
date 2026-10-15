@@ -74,6 +74,8 @@ export interface MultiTermApi {
   renameTerminal(id: string, name: string): Promise<void>;
   setTerminalColor(id: string, color: PaneColor | null): Promise<void>;
   interruptTerminal(id: string): Promise<void>;
+  /** O xterm desenhou `bytes` do output deste terminal (controle de fluxo). */
+  ackOutput(id: string, bytes: number): void;
   /** Abre um link no navegador do sistema (so http, https e mailto). */
   openExternal(url: string): void;
   /** Marca que voce ja viu este terminal (limpa o pedido de atencao). */
@@ -206,6 +208,7 @@ export const CHANNELS = {
   moveTerminal: 'terminal:move-workspace',
   interrupt: 'terminal:interrupt',
   openExternal: 'app:open-external',
+  ackOutput: 'terminal:ack-output',
   acknowledge: 'terminal:acknowledge',
   write: 'terminal:write',
   resize: 'terminal:resize',

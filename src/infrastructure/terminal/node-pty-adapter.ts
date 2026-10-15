@@ -26,6 +26,14 @@ class NodePty implements Pty {
     this.proc.kill(signal);
   }
 
+  pause(): void {
+    this.proc.pause();
+  }
+
+  resume(): void {
+    this.proc.resume();
+  }
+
   onData(listener: (chunk: string) => void): void {
     this.proc.onData(listener);
   }

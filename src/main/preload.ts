@@ -30,6 +30,7 @@ const api: MultiTermApi = {
   renameTerminal: (id, name) => ipcRenderer.invoke(CHANNELS.rename, id, name),
   setTerminalColor: (id, color) => ipcRenderer.invoke(CHANNELS.setColor, id, color),
   interruptTerminal: (id) => ipcRenderer.invoke(CHANNELS.interrupt, id),
+  ackOutput: (id, bytes) => ipcRenderer.send(CHANNELS.ackOutput, id, bytes),
   openExternal: (url) => ipcRenderer.send(CHANNELS.openExternal, url),
   replayTerminal: (id) => ipcRenderer.invoke(CHANNELS.replay, id),
 
