@@ -1,0 +1,27 @@
+name: Release
+
+# Ao publicar uma tag de versao (git tag v0.2.0 && git push origin v0.2.0),
+# gera o AppImage e o .deb e os anexa a uma Release do GitHub.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run dist
+      - name: Publica a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/*.AppImage release/*.deb --title "MultiTerm $GITHUB_REF_NAME" --generate-notes

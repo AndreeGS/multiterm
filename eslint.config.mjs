@@ -5,7 +5,7 @@ import tseslint from 'typescript-eslint';
  * promessa solta — o codigo marca as intencionais com `void`.
  */
 export default tseslint.config(
-  { ignores: ['dist/', 'node_modules/', 'scripts/', 'bin/', 'eslint.config.mjs'] },
+  { ignores: ['dist/', 'release/', 'build/', 'node_modules/', 'scripts/', 'bin/', 'eslint.config.mjs'] },
   {
     files: ['src/**/*.ts'],
     languageOptions: {

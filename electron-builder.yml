@@ -1,0 +1,43 @@
+# Pacotes de instalacao: `npm run dist` gera em release/ um AppImage (um arquivo
+# so, roda em qualquer distro) e um .deb (Debian/Ubuntu).
+appId: io.github.andreegs.multiterm
+productName: MultiTerm
+directories:
+  output: release
+  buildResources: build
+
+# So o que roda: os bundles do esbuild. xterm e addons ja estao dentro do
+# renderer.js; das dependencias, so o node-pty (nativo) vai no pacote.
+files:
+  - dist/main/**
+  - dist/preload/**
+  - dist/renderer/**
+  - package.json
+# O .node do node-pty nao carrega de dentro do asar.
+asarUnpack:
+  - node_modules/node-pty/**
+
+linux:
+  target:
+    - AppImage
+    - deb
+  executableName: multiterm
+  # app_id no Wayland = nome do .desktop, para a dock ligar a janela ao icone.
+  syncDesktopName: true
+  icon: build/icon.png
+  category: Development
+  # Igual ao bin/multiterm: agrupa a janela no icone certo da dock.
+  executableArgs:
+    - --class=MultiTerm
+  desktop:
+    entry:
+      StartupWMClass: MultiTerm
+      Keywords: terminal;shell;claude;codex;agente;
+  # O .deb exige mantenedor com email; o noreply do GitHub nao expoe o pessoal.
+  maintainer: AndreeGS <AndreeGS@users.noreply.github.com>
+  synopsis: Painel para varios terminais e agentes numa janela so
+
+appImage:
+  artifactName: MultiTerm-${version}-${arch}.AppImage
+deb:
+  artifactName: multiterm_${version}_${arch}.deb
