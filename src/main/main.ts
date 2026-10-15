@@ -133,6 +133,10 @@ function createWindow(): void {
     },
   });
 
+  // Sem o menu padrao do Electron (File/Edit/View/Window): nada nele e do app,
+  // e os atalhos que importam o proprio app trata. No macOS o menu e do
+  // sistema, fora da janela, e isto nao tem efeito.
+  mainWindow.removeMenu();
   mainWindow.once('ready-to-show', () => {
     if (window.maximized) mainWindow?.maximize();
     mainWindow?.show();
