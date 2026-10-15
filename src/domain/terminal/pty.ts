@@ -6,6 +6,8 @@ import type { TerminalSize } from './types.js';
  */
 export interface Pty {
   readonly pid: number;
+  /** Nome do processo em foreground (o shell, ou o programa que ele rodou). */
+  readonly process: string;
   write(data: string): void;
   resize(size: TerminalSize): void;
   /** Envia um sinal ao processo (SIGINT, SIGTERM, ...). */

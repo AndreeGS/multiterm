@@ -17,8 +17,14 @@ const STATUS_TEXT: Partial<Record<TerminalSnapshot['status'], string>> = {
 export class AttentionNotifier {
   private readonly previous = new Map<string, boolean>();
   private readonly notices = new Map<string, string | null>();
+  /** Notificacoes na tela: sem referencia o GC as coleta e o clique se perde. */
+  private readonly shown = new Set<Notification>();
 
-  constructor(private readonly getWindow: () => BrowserWindow | null) {}
+  constructor(
+    private readonly getWindow: () => BrowserWindow | null,
+    /** Clicou na notificacao: o renderer leva voce ao terminal. */
+    private readonly onActivate: (id: string) => void,
+  ) {}
 
   observe(snapshot: TerminalSnapshot): void {
     const before = this.previous.get(snapshot.id) ?? false;
@@ -43,11 +49,23 @@ export class AttentionNotifier {
     if (window?.isFocused()) return;
 
     if (Notification.isSupported()) {
-      new Notification({
+      const notification = new Notification({
         title: snapshot.name,
         body: snapshot.notice ?? STATUS_TEXT[snapshot.status] ?? 'precisa de atencao',
         urgency: snapshot.status === 'error' || snapshot.notice ? 'critical' : 'normal',
-      }).show();
+      });
+      notification.on('click', () => {
+        this.shown.delete(notification);
+        const target = this.getWindow();
+        if (!target) return;
+        if (target.isMinimized()) target.restore();
+        target.show();
+        target.focus();
+        this.onActivate(snapshot.id);
+      });
+      this.shown.add(notification);
+      notification.on('close', () => this.shown.delete(notification));
+      notification.show();
     }
     window?.flashFrame(true);
   }

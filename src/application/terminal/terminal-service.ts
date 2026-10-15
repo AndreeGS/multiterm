@@ -75,6 +75,10 @@ export class TerminalService {
     this.sessions.get(id)?.acknowledge();
   }
 
+  busyProgram(id: string): string | null {
+    return this.sessions.get(id)?.busyProgram() ?? null;
+  }
+
   pause(id: string): void {
     this.sessions.get(id)?.pause();
   }

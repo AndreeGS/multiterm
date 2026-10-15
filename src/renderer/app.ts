@@ -21,7 +21,7 @@ import { openAlert, openConfirm } from './components/dialogs.js';
 import { openWorkspaceDialog, type WorkspaceAction, type WorkspaceRow } from './components/workspace-dialog.js';
 import type { Board, LinkLabel, Panel } from './components/panel.js';
 import { TaskPane } from './components/task-pane.js';
-import { terminalPlace, TerminalPane } from './components/terminal-pane.js';
+import { STATUS_LABEL, terminalPlace, TerminalPane } from './components/terminal-pane.js';
 import { Toolbar } from './components/toolbar.js';
 import { setHomeDir, shortenPath } from './paths.js';
 import { matchShortcut, type Shortcut } from './shortcuts.js';
@@ -96,7 +96,7 @@ export class App {
     this.emptyState.className = 'empty';
     this.emptyState.innerHTML =
       '<div>Nada aberto ainda.</div>' +
-      '<div><kbd>Ctrl</kbd>+<kbd>T</kbd> novo terminal · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> nova nota · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> nova lista de tarefas</div>' +
+      '<div><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> novo terminal · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> nova nota · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd> nova lista de tarefas</div>' +
       '<div><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> todos os comandos</div>';
     this.links = new LinkLayer(wrap, () => this.linkPairs());
     wrap.append(this.emptyState, this.grid.element, this.canvas.element, this.links.element);
@@ -210,6 +210,8 @@ export class App {
     });
     this.api.onTerminalClose((id) => this.removePane(id));
     this.api.onUsageUpdate((summary) => this.applyUsageSummary(summary));
+    // Clicou na notificacao do sistema: vai ate o terminal.
+    this.api.onFocusTerminal((id) => this.goTo(id));
 
     // Voltar para a janela ja conta como "vi o terminal em foco".
     window.addEventListener('focus', () => {
@@ -240,6 +242,7 @@ export class App {
       case 'palette': return void this.openCommandPalette();
       case 'next-attention': return this.goToNextAttention();
       case 'workspaces': return void this.openWorkspaces();
+      case 'help': return void openAlert('Atalhos de teclado', SHORTCUTS_HELP);
       case 'focus-index': return this.goTo(this.visibleIds()[shortcut.index]);
       case 'focus-step': return this.stepFocus(shortcut.delta);
       case 'close-pane':
@@ -470,6 +473,7 @@ export class App {
     }
     const focusedPane = focused ? this.panes.get(focused) : undefined;
     if (focusedPane instanceof TerminalPane) {
+      items.push({ label: `Buscar em "${focusedPane.name}"`, hint: 'Ctrl+Shift+F', run: () => focusedPane.openSearch() });
       items.push({ label: `Cor de "${focusedPane.name}"`, run: () => void focusedPane.pickColor() });
       if (focusedPane.info.worktree) {
         items.push({ label: `Fechar "${focusedPane.name}" e remover o worktree`, run: () => void this.closePane(focusedPane.id) });
@@ -488,6 +492,7 @@ export class App {
       items.push({ label: `Layout: ${layout.name}`, run: () => this.setLayout(layout.id) });
     }
     items.push({ label: 'Configuracoes', hint: 'Ctrl+,', run: () => void this.openSettings() });
+    items.push({ label: 'Atalhos de teclado', hint: 'F1', run: () => void openAlert('Atalhos de teclado', SHORTCUTS_HELP) });
 
     let chosen: PaletteItem | null = null;
     try {
@@ -839,6 +844,14 @@ export class App {
       this.removePane(id);
       return;
     }
+    // Fechar mata o que estiver rodando: com um programa aberto, pergunta antes.
+    const busy = pane instanceof TerminalPane ? await this.api.busyProgram(id) : null;
+    if (busy && pane instanceof TerminalPane && !await openConfirm({
+      title: `Fechar "${pane.name}"?`,
+      message: `${busy} ainda esta rodando neste terminal e sera encerrado.`,
+      confirmLabel: 'Fechar',
+      danger: true,
+    })) return;
     const worktree = pane instanceof TerminalPane ? pane.info.worktree : null;
     await this.api.closeTerminal(id);
     if (worktree) await this.offerWorktreeRemoval(worktree);
@@ -886,6 +899,7 @@ export class App {
     if (!this.panes.has(snapshot.id)) {
       this.attention.delete(snapshot.id);
       this.toolbar.setAttention(this.attention.size);
+      this.updatePaging();
       return;
     }
     if (snapshot.needsAttention && snapshot.id === this.focusedId && document.hasFocus()) {
@@ -895,6 +909,7 @@ export class App {
     if (snapshot.needsAttention) this.attention.add(snapshot.id);
     else this.attention.delete(snapshot.id);
     this.toolbar.setAttention(this.attention.size);
+    this.updatePaging();
     this.refreshWorkspaceUi();
   }
 
@@ -905,6 +920,7 @@ export class App {
     this.api.acknowledgeTerminal(id);
     if (this.attention.delete(id)) {
       this.toolbar.setAttention(this.attention.size);
+      this.updatePaging();
       this.refreshWorkspaceUi();
     }
   }
@@ -970,6 +986,7 @@ export class App {
     this.panes.delete(id);
     this.attention.delete(id);
     this.toolbar.setAttention(this.attention.size);
+    this.updatePaging();
     const position = this.order.indexOf(id);
     // splice(-1, 1) removeria o ultimo item; so mexe se o id realmente estiver la.
     if (position >= 0) this.order.splice(position, 1);
@@ -1018,7 +1035,15 @@ export class App {
   }
 
   private updatePaging(): void {
-    this.toolbar.setPaging(this.board.currentPage, this.board.pageCount);
+    const page = this.board.currentPage;
+    const waiting = new Set<number>();
+    if (this.board === this.grid) {
+      for (const id of this.attention) {
+        const at = this.grid.pageOf(id);
+        if (at >= 0 && at !== page) waiting.add(at);
+      }
+    }
+    this.toolbar.setPaging(page, this.board.pageCount, [...waiting].sort((a, b) => a - b));
   }
 
   private sync(): void {
@@ -1060,12 +1085,34 @@ function ipcErrorMessage(error: unknown): string {
   return message.replace(/^Error invoking remote method '[^']*': (Error: )?/, '');
 }
 
+const SHORTCUTS_HELP = [
+  'Ctrl+Shift+T — novo terminal (Ctrl+T fora de um terminal)',
+  'Ctrl+Shift+N — nova nota',
+  'Ctrl+Shift+L — nova lista de tarefas',
+  'Ctrl+Shift+P — todos os comandos',
+  'Ctrl+Shift+O — workspaces',
+  'Ctrl+Shift+A — proximo terminal aguardando',
+  'Ctrl+Shift+M — maximizar / restaurar painel',
+  'Ctrl+Shift+W — fechar painel',
+  'Alt+1..9 — ir para o painel N',
+  'Ctrl+PgUp / PgDn — painel anterior / seguinte',
+  'Ctrl+, — configuracoes',
+  '',
+  'No terminal:',
+  'Ctrl+Shift+C / V — copiar / colar',
+  'Ctrl+Shift+F — buscar no scrollback',
+  'Botao direito — menu do terminal',
+  '',
+  'Area livre: arraste o fundo para mover, Ctrl+roda para zoom.',
+].join('\n');
+
 function paneDetail(pane: Panel): string {
   if (pane instanceof TerminalPane) {
-    const { notice } = pane.info;
+    const { notice, status, exitCode } = pane.info;
     if (notice) return `🔔 ${notice}`;
     const usage = pane.usageText;
-    return `terminal · ${terminalPlace(pane.info)}${usage ? ` · ${usage}` : ''}`;
+    const state = STATUS_LABEL[status] + (exitCode !== null ? ` (${exitCode})` : '');
+    return `terminal · ${state} · ${terminalPlace(pane.info)}${usage ? ` · ${usage}` : ''}`;
   }
   if (pane instanceof NotePane) return 'nota';
   if (pane instanceof TaskPane) return 'tarefas';

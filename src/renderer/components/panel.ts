@@ -52,6 +52,8 @@ export function button(label: string, title: string, onClick: () => void): HTMLB
   const node = document.createElement('button');
   node.textContent = label;
   node.title = title;
+  // So o glifo (⤢ ✕ ⟳) nao diz nada a um leitor de tela.
+  node.setAttribute('aria-label', title);
   node.addEventListener('click', (event) => {
     event.stopPropagation();
     onClick();

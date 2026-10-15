@@ -399,6 +399,7 @@ function registerIpc(): void {
     else terminalRects.delete(id);
     persistTerminals();
   });
+  handle(CHANNELS.busyProgram, (_event, id: string) => terminals.busyProgram(id));
   on(CHANNELS.ackOutput, (_event, id: unknown, bytes: unknown) => {
     if (typeof id !== 'string' || !Number.isFinite(bytes)) return;
     if (flow.acked(id, bytes as number)) resumeOutput(id);
@@ -535,7 +536,7 @@ if (!app.requestSingleInstanceLock()) {
     texts = new TextsService(new JsonTextsStore(app.getPath('userData')));
     frames = new FramesService(new JsonFramesStore(app.getPath('userData')));
     tasks = new TasksService(new JsonTasksStore(app.getPath('userData')));
-    attention = new AttentionNotifier(() => mainWindow);
+    attention = new AttentionNotifier(() => mainWindow, (id) => send(CHANNELS.focusTerminal, id));
     terminals = new TerminalService(new NodePtyFactory(), {
       onData: (id, chunk, seq) => output.push(id, chunk, seq),
       onUpdate: (snapshot) => {
