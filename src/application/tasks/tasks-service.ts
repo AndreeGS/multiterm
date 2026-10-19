@@ -7,6 +7,7 @@ import {
 } from '../../domain/tasks/task-list.js';
 import type { JsonTasksStore } from '../../infrastructure/persistence/json-tasks-store.js';
 import { orphanIds } from '../../domain/workspace/workspace.js';
+import { DebouncedSave } from '../debounced-save.js';
 
 const SAVE_DEBOUNCE_MS = 600;
 
@@ -16,7 +17,7 @@ const SAVE_DEBOUNCE_MS = 600;
  */
 export class TasksService {
   private readonly lists = new Map<string, TaskList>();
-  private timer: NodeJS.Timeout | null = null;
+  private readonly saver = new DebouncedSave(SAVE_DEBOUNCE_MS, () => this.store.save(this.list()));
 
   constructor(private readonly store: JsonTasksStore) {
     for (const list of store.load()) this.lists.set(list.id, list);
@@ -69,18 +70,10 @@ export class TasksService {
 
   /** Grava imediatamente (usado no encerramento do app). */
   flush(): void {
-    if (!this.timer) return;
-    clearTimeout(this.timer);
-    this.timer = null;
-    this.store.save(this.list());
+    this.saver.flush();
   }
 
   private scheduleSave(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      this.store.save(this.list());
-    }, SAVE_DEBOUNCE_MS);
-    this.timer.unref?.();
+    this.saver.schedule();
   }
 }

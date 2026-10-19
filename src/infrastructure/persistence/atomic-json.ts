@@ -11,16 +11,23 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 
-/** Um arquivo que estava corrompido na leitura e foi posto de lado. */
+/** Um arquivo que estava corrompido (ou ilegivel) na leitura e foi posto de lado. */
 export interface RecoveredFile {
   readonly file: string;
-  /** Para onde o arquivo corrompido foi movido (nada e apagado). */
+  /** `unreadable` = existe mas nao deu para ler (permissao, arquivo preso). */
+  readonly reason: 'corrupt' | 'unreadable';
+  /** Para onde o arquivo foi movido (nada e apagado); `null` = nao deu para mover. */
   readonly movedTo: string | null;
   /** O conteudo veio do `.bak`; `false` = comecou vazio. */
   readonly fromBackup: boolean;
 }
 
 const recovered: RecoveredFile[] = [];
+/**
+ * Arquivos que falharam na leitura e nao puderam ser movidos de lado. Gravar
+ * neles apagaria o original (e o `.bak`), entao ficam so-leitura ate reabrir.
+ */
+const protectedFiles = new Set<string>();
 
 /** Arquivos recuperados desde a ultima chamada, para avisar o usuario. */
 export function takeRecoveredFiles(): RecoveredFile[] {
@@ -30,33 +37,50 @@ export function takeRecoveredFiles(): RecoveredFile[] {
 /**
  * Le e faz parse de um JSON; `undefined` se o arquivo nao existir.
  *
- * Corrompido e diferente de ausente: o arquivo e movido para
- * `<nome>.corrupt-<ts>` e o conteudo vem do `.bak`. Sem isso o app subiria
- * vazio e o proximo save sobrescreveria o que ainda dava para recuperar.
+ * Corrompido (ou ilegivel: permissao, antivirus segurando) e diferente de
+ * ausente: o arquivo e movido para `<nome>.corrupt-<ts>` e o conteudo vem do
+ * `.bak`. Sem isso o app subiria vazio e o proximo save sobrescreveria o que
+ * ainda dava para recuperar.
  */
 export function readJson(file: string): unknown {
   let text: string;
   try {
     text = readFileSync(file, 'utf8');
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.error(`[persistencia] falha ao ler ${file}:`, error);
-    return undefined;
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    console.error(`[persistencia] falha ao ler ${file}:`, error);
+    return setAside(file, 'unreadable');
   }
   try {
     return JSON.parse(text);
   } catch (error) {
     console.error(`[persistencia] ${file} corrompido:`, error);
   }
+  return setAside(file, 'corrupt');
+}
+
+/** Guarda o arquivo ruim de lado e devolve o conteudo do `.bak` (se houver). */
+function setAside(file: string, reason: RecoveredFile['reason']): unknown {
   const movedTo = `${file}.corrupt-${Date.now()}`;
   let moved = true;
   try {
     renameSync(file, movedTo);
   } catch (error) {
     moved = false;
-    console.error(`[persistencia] falha ao mover ${file}:`, error);
+    protectedFiles.add(file);
+    console.error(`[persistencia] falha ao mover ${file}; nao sera regravado nesta sessao:`, error);
   }
   const backup = readBackup(`${file}.bak`);
-  recovered.push({ file, movedTo: moved ? movedTo : null, fromBackup: backup !== undefined });
+  // O arquivo volta a existir ja com o backup: sem isso, fechar sem mexer em
+  // nada deixaria so o `.bak`, e a proxima abertura comecaria vazia.
+  if (moved && backup !== undefined) {
+    try {
+      copyFileSync(`${file}.bak`, file);
+    } catch (error) {
+      console.error(`[persistencia] falha ao restaurar ${file} do backup:`, error);
+    }
+  }
+  recovered.push({ file, reason, movedTo: moved ? movedTo : null, fromBackup: backup !== undefined });
   return backup;
 }
 
@@ -74,6 +98,7 @@ function readBackup(file: string): unknown {
  * `.bak`, que o `readJson` usa se o arquivo principal estragar.
  */
 export function writeJsonAtomic(file: string, value: unknown): void {
+  if (protectedFiles.has(file)) throw new Error(`${file} nao pode ser lido; gravar por cima apagaria o original.`);
   mkdirSync(dirname(file), { recursive: true });
   const tmp = `${file}.tmp`;
   const fd = openSync(tmp, 'w');
@@ -86,6 +111,35 @@ export function writeJsonAtomic(file: string, value: unknown): void {
   // O arquivo atual so e escrito por aqui (sempre JSON valido): pode virar o backup.
   if (existsSync(file)) copyFileSync(file, `${file}.bak`);
   renameWithRetry(tmp, file);
+}
+
+/** Quem avisa o usuario de uma gravacao que falhou (o main mostra um dialogo). */
+type SaveFailureListener = (file: string, error: unknown) => void;
+let onSaveFailure: SaveFailureListener | null = null;
+/** Ja avisados: um disco cheio nao vira um dialogo a cada tecla. Sai da lista ao gravar. */
+const failing = new Set<string>();
+
+export function setSaveFailureListener(listener: SaveFailureListener | null): void {
+  onSaveFailure = listener;
+}
+
+/**
+ * `writeJsonAtomic` que nunca lanca: registra a falha, avisa uma vez por
+ * arquivo e devolve se gravou (quem chama tenta de novo depois).
+ */
+export function saveJson(file: string, value: unknown): boolean {
+  try {
+    writeJsonAtomic(file, value);
+    failing.delete(file);
+    return true;
+  } catch (error) {
+    console.error(`[persistencia] falha ao salvar ${file}:`, error);
+    if (!failing.has(file)) {
+      failing.add(file);
+      onSaveFailure?.(file, error);
+    }
+    return false;
+  }
 }
 
 const RENAME_ATTEMPTS = 3;

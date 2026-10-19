@@ -3,13 +3,14 @@ import { applyFramePatch, createFrame, type CanvasFrame, type CanvasFramePatch }
 import type { CanvasRect } from '../../domain/workspace/layout.js';
 import type { JsonFramesStore } from '../../infrastructure/persistence/json-frames-store.js';
 import { orphanIds } from '../../domain/workspace/workspace.js';
+import { DebouncedSave } from '../debounced-save.js';
 
 const SAVE_DEBOUNCE_MS = 600;
 
 /** Caso de uso: molduras da area livre. Mesmo esquema dos textos soltos. */
 export class FramesService {
   private readonly frames = new Map<string, CanvasFrame>();
-  private timer: NodeJS.Timeout | null = null;
+  private readonly saver = new DebouncedSave(SAVE_DEBOUNCE_MS, () => this.store.save(this.list()));
 
   constructor(private readonly store: JsonFramesStore) {
     for (const frame of store.load()) this.frames.set(frame.id, frame);
@@ -61,18 +62,10 @@ export class FramesService {
 
   /** Grava imediatamente (usado no encerramento do app). */
   flush(): void {
-    if (!this.timer) return;
-    clearTimeout(this.timer);
-    this.timer = null;
-    this.store.save(this.list());
+    this.saver.flush();
   }
 
   private scheduleSave(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      this.store.save(this.list());
-    }, SAVE_DEBOUNCE_MS);
-    this.timer.unref?.();
+    this.saver.schedule();
   }
 }

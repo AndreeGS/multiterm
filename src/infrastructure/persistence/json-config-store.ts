@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { type AppConfig, parseConfig } from '../../domain/workspace/config.js';
-import { readJson, writeJsonAtomic } from './atomic-json.js';
+import { readJson, saveJson } from './atomic-json.js';
 
 /** Persistencia em um unico config.json, com escrita atomica. */
 export class JsonConfigStore {
@@ -18,11 +18,8 @@ export class JsonConfigStore {
     return parseConfig(readJson(this.file));
   }
 
-  save(config: AppConfig): void {
-    try {
-      writeJsonAtomic(this.file, config);
-    } catch (error) {
-      console.error('[config] falha ao salvar:', error);
-    }
+  /** `false` = nao gravou (ja foi registrado); quem chama tenta de novo. */
+  save(config: AppConfig): boolean {
+    return saveJson(this.file, config);
   }
 }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { applyNotePatch, createNote, type Note, type NotePatch } from '../../domain/notes/note.js';
 import type { JsonNotesStore } from '../../infrastructure/persistence/json-notes-store.js';
 import { orphanIds } from '../../domain/workspace/workspace.js';
+import { DebouncedSave } from '../debounced-save.js';
 
 const SAVE_DEBOUNCE_MS = 600;
 
@@ -11,7 +12,7 @@ const SAVE_DEBOUNCE_MS = 600;
  */
 export class NotesService {
   private readonly notes = new Map<string, Note>();
-  private timer: NodeJS.Timeout | null = null;
+  private readonly saver = new DebouncedSave(SAVE_DEBOUNCE_MS, () => this.store.save(this.list()));
 
   constructor(private readonly store: JsonNotesStore) {
     for (const note of store.load()) this.notes.set(note.id, note);
@@ -63,18 +64,10 @@ export class NotesService {
 
   /** Grava imediatamente (usado no encerramento do app). */
   flush(): void {
-    if (!this.timer) return;
-    clearTimeout(this.timer);
-    this.timer = null;
-    this.store.save(this.list());
+    this.saver.flush();
   }
 
   private scheduleSave(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      this.store.save(this.list());
-    }, SAVE_DEBOUNCE_MS);
-    this.timer.unref?.();
+    this.saver.schedule();
   }
 }

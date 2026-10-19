@@ -48,7 +48,9 @@ export interface BootstrapState {
 
 export interface RecoveredFileNotice {
   readonly file: string;
-  /** Onde o arquivo corrompido foi guardado; `null` se nao deu para mover. */
+  /** `unreadable` = existe mas nao deu para ler (permissao, arquivo preso). */
+  readonly reason: 'corrupt' | 'unreadable';
+  /** Onde o arquivo foi guardado; `null` = nao deu para mover, e ele nao e regravado. */
   readonly movedTo: string | null;
   /** O conteudo foi restaurado do backup; `false` = comecou vazio. */
   readonly fromBackup: boolean;
