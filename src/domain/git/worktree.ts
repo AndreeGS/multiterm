@@ -38,6 +38,8 @@ export interface Git {
   /** `create` = cria a branch a partir do HEAD; senao faz checkout da existente. */
   addWorktree(repo: string, path: string, branch: string, create: boolean): Promise<void>;
   removeWorktree(repo: string, path: string, force: boolean): Promise<void>;
+  /** Esquece worktrees cuja pasta foi apagada por fora (`git worktree prune`). */
+  pruneWorktrees(repo: string): Promise<void>;
   /** Ha mudancas nao commitadas (inclusive arquivos novos)? */
   isDirty(path: string): Promise<boolean>;
 }

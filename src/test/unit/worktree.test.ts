@@ -83,6 +83,21 @@ describe('WorktreeService com git de verdade', () => {
     assert.equal(again.path, join(root, 'api.worktrees', 'feat-x'));
   });
 
+  it('worktree apagado por fora e recriado, nao reaproveitado', async () => {
+    const worktree = await service.create(repo, 'feat/sumiu');
+    rmSync(worktree.path, { recursive: true, force: true });
+    const again = await service.create(repo, 'feat/sumiu');
+    assert.equal(again.path, worktree.path);
+    assert.ok(existsSync(again.path));
+    assert.equal(sh(['branch', '--show-current'], again.path).trim(), 'feat/sumiu');
+  });
+
+  it('dois pedidos juntos para a mesma branch nova chegam no mesmo worktree', async () => {
+    const [a, b] = await Promise.all([service.create(repo, 'feat/duplo'), service.create(repo, 'feat/duplo')]);
+    assert.equal(a.path, b.path);
+    assert.ok(existsSync(a.path));
+  });
+
   it('branch existente sem worktree e usada, nao recriada', async () => {
     sh(['branch', 'existente'], repo);
     const worktree = await service.create(repo, 'existente');
