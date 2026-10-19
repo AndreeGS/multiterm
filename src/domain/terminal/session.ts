@@ -342,14 +342,24 @@ export class TerminalSession {
   }
 }
 
-function buildEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+export function buildEnv(base: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base };
   // Agentes de CLI inspecionam TERM/COLORTERM para decidir cores e TUI.
   env.TERM = 'xterm-256color';
   env.COLORTERM = 'truecolor';
+  env.TERM_PROGRAM = 'MultiTerm';
   // Variaveis injetadas pelo Electron que confundem processos filhos.
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.ELECTRON_NO_ATTACH_CONSOLE;
+  // Aberto por `npm start`, o app herda o ambiente do npm; o nvm, por exemplo,
+  // reclama de `npm_config_prefix` em todo shell novo.
+  for (const key of Object.keys(env)) {
+    if (key.startsWith('npm_') || key === 'INIT_CWD') delete env[key];
+  }
+  // Aberto pelo Finder/Dock (ou um .desktop sem locale), o shell cairia no
+  // locale C e acentos e caracteres das TUIs sairiam quebrados. O macOS nao
+  // tem C.UTF-8; no Linux ele existe sempre (en_US pode nao estar gerado).
+  if (!env.LANG && !env.LC_ALL && !env.LC_CTYPE) env.LANG = platform === 'darwin' ? 'en_US.UTF-8' : 'C.UTF-8';
   return env;
 }
 

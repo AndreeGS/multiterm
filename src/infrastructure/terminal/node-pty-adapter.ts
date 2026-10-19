@@ -10,8 +10,10 @@ class NodePty implements Pty {
     return this.proc.pid;
   }
 
-  get process(): string {
-    return this.proc.process;
+  get process(): string | null {
+    // No Windows o node-pty devolve o `name` do terminal ("xterm-256color"),
+    // nao o processo em foreground: sem como saber, nao pede confirmacao.
+    return process.platform === 'win32' ? null : this.proc.process;
   }
 
   write(data: string): void {
