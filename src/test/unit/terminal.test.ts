@@ -9,7 +9,7 @@ import {
 } from '../../domain/terminal/command.js';
 import { parseTerminalId } from '../../domain/terminal/link.js';
 import type { Pty, PtyFactory, PtyOptions } from '../../domain/terminal/pty.js';
-import { TerminalSession } from '../../domain/terminal/session.js';
+import { buildEnv, TerminalSession } from '../../domain/terminal/session.js';
 import { BELL, notificationText, SignalScanner } from '../../domain/terminal/signals.js';
 import type { TerminalSize, TerminalSnapshot } from '../../domain/terminal/types.js';
 
@@ -148,6 +148,26 @@ class FakeFactory implements PtyFactory {
     return this.spawned[this.spawned.length - 1]!;
   }
 }
+
+describe('buildEnv', () => {
+  it('tira o ambiente do npm e as variaveis do Electron, e marca o terminal', () => {
+    const env = buildEnv({ PATH: '/bin', npm_config_prefix: '/x', npm_lifecycle_event: 'start', INIT_CWD: '/y', ELECTRON_RUN_AS_NODE: '1', LANG: 'pt_BR.UTF-8' }, 'linux');
+    assert.equal(env.PATH, '/bin');
+    assert.equal(env.npm_config_prefix, undefined);
+    assert.equal(env.npm_lifecycle_event, undefined);
+    assert.equal(env.INIT_CWD, undefined);
+    assert.equal(env.ELECTRON_RUN_AS_NODE, undefined);
+    assert.equal(env.TERM, 'xterm-256color');
+    assert.equal(env.TERM_PROGRAM, 'MultiTerm');
+    assert.equal(env.LANG, 'pt_BR.UTF-8');
+  });
+
+  it('sem locale nenhum, usa UTF-8 (en_US no macOS, que nao tem C.UTF-8)', () => {
+    assert.equal(buildEnv({}, 'linux').LANG, 'C.UTF-8');
+    assert.equal(buildEnv({}, 'darwin').LANG, 'en_US.UTF-8');
+    assert.equal(buildEnv({ LC_ALL: 'pt_BR.UTF-8' }, 'darwin').LANG, undefined);
+  });
+});
 
 describe('TerminalSession', () => {
   let factory: FakeFactory;

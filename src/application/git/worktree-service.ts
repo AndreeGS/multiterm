@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isValidBranchName } from '../../domain/git/branch.js';
 import type { Git, GitInfo, WorktreeInfo } from '../../domain/git/worktree.js';
@@ -8,6 +9,9 @@ import { worktreePath } from '../../domain/git/worktree-path.js';
  * abrir e remove quando voce decide, sem nunca apagar a branch.
  */
 export class WorktreeService {
+  /** Criacao em andamento por repo: dois pedidos juntos (duplo submit) nao disputam a mesma branch. */
+  private readonly queues = new Map<string, Promise<unknown>>();
+
   constructor(private readonly git: Git) {}
 
   info(cwd: string): Promise<GitInfo> {
@@ -22,8 +26,17 @@ export class WorktreeService {
     if (!isValidBranchName(branch)) throw new Error(`Nome de branch invalido: "${branch}"`);
     const { repo } = await this.git.info(cwd);
     if (!repo) throw new Error('O diretorio nao esta num repositorio git.');
+    return this.serialized(repo, () => this.createIn(repo, branch));
+  }
 
-    const existing = (await this.git.listWorktrees(repo)).find((entry) => entry.branch === branch);
+  private async createIn(repo: string, branch: string): Promise<WorktreeInfo> {
+    let existing = (await this.git.listWorktrees(repo)).find((entry) => entry.branch === branch);
+    if (existing && !existsSync(existing.path)) {
+      // Pasta apagada por fora: o git ainda a lista ate um prune, e reaproveita-la
+      // abriria o terminal no home com um worktree que nao existe.
+      await this.git.pruneWorktrees(repo);
+      existing = undefined;
+    }
     if (existing) {
       // A copia principal nao e "um worktree do terminal": remover depois a apagaria.
       if (resolve(existing.path) === resolve(repo)) {
@@ -35,6 +48,17 @@ export class WorktreeService {
     const path = worktreePath(repo, branch);
     await this.git.addWorktree(repo, path, branch, !(await this.git.branchExists(repo, branch)));
     return { repo, path, branch };
+  }
+
+  private serialized<T>(repo: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.queues.get(repo) ?? Promise.resolve();
+    const next = previous.then(task, task);
+    this.queues.set(repo, next);
+    const cleanup = () => {
+      if (this.queues.get(repo) === next) this.queues.delete(repo);
+    };
+    next.then(cleanup, cleanup);
+    return next;
   }
 
   async isDirty(worktree: WorktreeInfo): Promise<boolean> {

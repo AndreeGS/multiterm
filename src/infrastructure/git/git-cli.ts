@@ -3,6 +3,8 @@ import { basename, dirname } from 'node:path';
 import { parseWorktreeList, type Git, type GitInfo, type WorktreeEntry } from '../../domain/git/worktree.js';
 
 const TIMEOUT_MS = 20_000;
+/** Checkout de repo grande (ou com LFS, hooks) passa facil de 20s; matar no meio deixa um worktree pela metade. */
+const ADD_TIMEOUT_MS = 5 * 60_000;
 
 interface Result {
   readonly ok: boolean;
@@ -20,15 +22,15 @@ const SAFE_CONFIG = ['-c', 'core.fsmonitor=false'];
  * Executa o `git` da maquina. Sempre com argumentos em lista (`execFile`, sem
  * shell): nome de branch ou caminho nunca vira comando.
  */
-function git(args: string[], cwd: string): Promise<Result> {
+function git(args: string[], cwd: string, timeout = TIMEOUT_MS): Promise<Result> {
   return new Promise((resolve) => {
-    execFile('git', [...SAFE_CONFIG, ...args], { cwd, timeout: TIMEOUT_MS, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } },
+    execFile('git', [...SAFE_CONFIG, ...args], { cwd, timeout, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } },
       (error, stdout, stderr) => resolve({ ok: !error, stdout: String(stdout), stderr: String(stderr) }));
   });
 }
 
-async function run(args: string[], cwd: string): Promise<string> {
-  const result = await git(args, cwd);
+async function run(args: string[], cwd: string, timeout = TIMEOUT_MS): Promise<string> {
+  const result = await git(args, cwd, timeout);
   if (!result.ok) throw new Error(result.stderr.trim() || `git ${args[0]} falhou`);
   return result.stdout;
 }
@@ -54,7 +56,12 @@ export class GitCli implements Git {
   }
 
   async addWorktree(repo: string, path: string, branch: string, create: boolean): Promise<void> {
-    await run(create ? ['worktree', 'add', '-b', branch, '--', path] : ['worktree', 'add', '--', path, branch], repo);
+    const args = create ? ['worktree', 'add', '-b', branch, '--', path] : ['worktree', 'add', '--', path, branch];
+    await run(args, repo, ADD_TIMEOUT_MS);
+  }
+
+  async pruneWorktrees(repo: string): Promise<void> {
+    await run(['worktree', 'prune'], repo);
   }
 
   async removeWorktree(repo: string, path: string, force: boolean): Promise<void> {

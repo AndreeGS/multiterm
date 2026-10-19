@@ -12,11 +12,11 @@ import {
 } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { WorktreeService } from '../application/git/worktree-service.js';
-import { TerminalService } from '../application/terminal/terminal-service.js';
+import { resolveCwd, TerminalService } from '../application/terminal/terminal-service.js';
 import { NotesService } from '../application/notes/notes-service.js';
 import { TextsService } from '../application/canvas/texts-service.js';
 import { FramesService } from '../application/canvas/frames-service.js';
@@ -46,7 +46,7 @@ import { visibleBounds } from '../domain/workspace/config.js';
 import { parseSettings, WINDOW_BACKGROUND } from '../domain/workspace/settings.js';
 import { parseTemplate } from '../domain/workspace/template.js';
 import { summarize } from '../domain/workspace/workspace.js';
-import { takeRecoveredFiles } from '../infrastructure/persistence/atomic-json.js';
+import { setSaveFailureListener, takeRecoveredFiles } from '../infrastructure/persistence/atomic-json.js';
 import { JsonConfigStore } from '../infrastructure/persistence/json-config-store.js';
 import { JsonNotesStore } from '../infrastructure/persistence/json-notes-store.js';
 import { JsonTextsStore } from '../infrastructure/persistence/json-texts-store.js';
@@ -141,7 +141,10 @@ function createWindow(): void {
     if (window.maximized) mainWindow?.maximize();
     mainWindow?.show();
   });
-  mainWindow.on('close', persistBounds);
+  mainWindow.on('close', (event) => {
+    persistBounds();
+    confirmQuit(event, () => mainWindow?.close());
+  });
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -165,10 +168,35 @@ function createWindow(): void {
     crashes.push(now);
     while (crashes.length > 0 && now - crashes[0]! > RELOAD_WINDOW_MS) crashes.shift();
     if (crashes.length <= MAX_RELOADS) mainWindow?.reload();
+    else void offerReload(crashes);
   });
 
   void mainWindow.loadFile(RENDERER_PAGE);
   if (process.argv.includes('--dev')) mainWindow.webContents.openDevTools({ mode: 'detach' });
+}
+
+/**
+ * Passou do limite de recarregamentos: em vez de uma janela em branco (com os
+ * terminais rodando sem ninguem ver), o usuario decide.
+ */
+async function offerReload(crashes: number[]): Promise<void> {
+  if (!mainWindow) return;
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'error',
+    buttons: ['Recarregar', 'Sair'],
+    defaultId: 0,
+    cancelId: 0,
+    title: 'MultiTerm',
+    message: 'A interface do MultiTerm caiu varias vezes seguidas.',
+    detail: 'Os terminais continuam rodando. Recarregar tenta abrir a interface de novo; sair encerra todos eles.',
+  });
+  if (response === 0) {
+    crashes.length = 0;
+    mainWindow?.reload();
+    return;
+  }
+  quitConfirmed = true;
+  app.quit();
 }
 
 /** Recarregamentos automaticos permitidos por janela de tempo, se o renderer cair. */
@@ -328,7 +356,9 @@ function registerIpc(): void {
     // worktree pela branch, e o terminal nasce no workspace em uso.
     let resolved: TerminalSpec = { ...spec, worktree: null };
     if (typeof worktreeBranch === 'string' && worktreeBranch.trim()) {
-      const worktree = await worktrees.create(spec.cwd, worktreeBranch.trim());
+      // Resolvido como o terminal faria: um cwd vazio ou relativo nao pode
+      // virar o diretorio de trabalho do proprio app.
+      const worktree = await worktrees.create(resolveCwd(spec.cwd), worktreeBranch.trim());
       resolved = { ...resolved, cwd: worktree.path, worktree };
     }
     // Lido depois do git: trocar de workspace enquanto o worktree e criado
@@ -346,7 +376,9 @@ function registerIpc(): void {
   handle(CHANNELS.restart, (_event, id: string, raw?: unknown) => {
     const cwd = typeof raw === 'string' && raw ? raw : undefined;
     terminals.restart(id, cwd);
-    if (cwd) workspace.rememberDir(cwd);
+    // O diretorio em que ele abriu de fato (um inexistente cai no home).
+    const restarted = cwd ? terminals.snapshot(id) : null;
+    if (restarted) workspace.rememberDir(restarted.cwd);
   });
   handle(CHANNELS.rename, (_event, id: string, name: unknown) => {
     if (typeof name === 'string' && name.length <= 200) terminals.rename(id, name);
@@ -398,6 +430,8 @@ function registerIpc(): void {
     return workspace.current().templates;
   });
   on(CHANNELS.setRect, (_event, id: string, rect: unknown) => {
+    // Pode chegar logo depois do terminal fechar: nao ressuscita a posicao dele.
+    if (!terminals.snapshot(id)) return;
     const parsed = parseCanvasRect(rect);
     if (parsed) terminalRects.set(id, parsed);
     else terminalRects.delete(id);
@@ -480,6 +514,50 @@ function registerIpc(): void {
 }
 
 let shutDown = false;
+/** O usuario ja confirmou encerrar os programas rodando: nao pergunta de novo. */
+let quitConfirmed = false;
+let askingQuit = false;
+
+/** "nome: programa" de cada terminal com algo rodando alem do shell. */
+function busyPrograms(): string[] {
+  return terminals.list().flatMap((snapshot) => {
+    const program = terminals.busyProgram(snapshot.id);
+    return program ? [`${snapshot.name || snapshot.cwd}: ${program}`] : [];
+  });
+}
+
+/**
+ * Fechar a janela ou sair encerra todos os terminais. Com algum programa
+ * rodando (um agente no meio de uma tarefa), cancela o evento e pergunta;
+ * `proceed` refaz o fechamento se o usuario confirmar.
+ */
+function confirmQuit(event: Electron.Event, proceed: () => void): boolean {
+  if (quitConfirmed || shutDown || !terminals) return false;
+  const busy = busyPrograms();
+  if (busy.length === 0) return false;
+  event.preventDefault();
+  if (askingQuit) return true;
+  askingQuit = true;
+  const options: Electron.MessageBoxOptions = {
+    type: 'warning',
+    buttons: ['Sair mesmo assim', 'Cancelar'],
+    defaultId: 1,
+    cancelId: 1,
+    title: 'MultiTerm',
+    message: busy.length === 1
+      ? 'Um terminal ainda esta rodando um programa.'
+      : `${busy.length} terminais ainda estao rodando programas.`,
+    detail: `${busy.join('\n')}\n\nSair encerra todos eles.`,
+  };
+  const answer = mainWindow ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options);
+  void answer.then(({ response }) => {
+    askingQuit = false;
+    if (response !== 0) return;
+    quitConfirmed = true;
+    proceed();
+  });
+  return true;
+}
 
 /** Grava tudo e encerra os terminais. Idempotente: varios caminhos levam aqui. */
 function shutdown(): void {
@@ -517,6 +595,19 @@ function adoptOrphans(): void {
   persistTerminals();
 }
 
+/** Uma gravacao falhou (disco cheio, permissao): avisa uma vez, o app segue tentando. */
+function warnSaveFailure(file: string, error: unknown): void {
+  if (shutDown) return;
+  const options: Electron.MessageBoxOptions = {
+    type: 'error',
+    title: 'MultiTerm',
+    message: `Nao foi possivel salvar ${basename(file)}.`,
+    detail: `${file}\n${error instanceof Error ? error.message : String(error)}\n\n`
+      + 'O app tenta de novo a cada alteracao e ao fechar. Ate la, as mudancas ficam so na memoria.',
+  };
+  void (mainWindow ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options));
+}
+
 /** Mover para um workspace que nao existe deixaria o item invisivel para sempre. */
 function withKnownWorkspace<T extends { workspaceId?: string }>(patch: T): T {
   if (patch.workspaceId === undefined || workspace.has(patch.workspaceId)) return patch;
@@ -546,6 +637,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   void app.whenReady().then(() => {
+    setSaveFailureListener(warnSaveFailure);
     workspace = new WorkspaceService(new JsonConfigStore(app.getPath('userData')));
     notes = new NotesService(new JsonNotesStore(app.getPath('userData')));
     texts = new TextsService(new JsonTextsStore(app.getPath('userData')));
@@ -561,13 +653,15 @@ if (!app.requestSingleInstanceLock()) {
         persistTerminals();
       },
       onClose: (id) => {
+        // O ultimo lote sai antes de esquecer o controle de fluxo: entregar
+        // depois recriaria a contagem (e ate uma pausa) de um terminal morto.
+        output.flush();
         attention.forget(id);
         terminalRects.delete(id);
         flow.forget(id);
         clearTimeout(stallTimers.get(id));
         stallTimers.delete(id);
         persistTerminals();
-        output.flush();
         send(CHANNELS.closed, id);
       },
     }, (sessionId) => hasClaudeTranscript(sessionId));
@@ -590,7 +684,9 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('window-all-closed', () => app.quit());
 
-  app.on('before-quit', shutdown);
+  app.on('before-quit', (event) => {
+    if (!confirmQuit(event, () => app.quit())) shutdown();
+  });
   // Nenhum destes passa pelo before-quit: sem o flush, as ultimas edicoes
   // (ainda no debounce) se perderiam.
   for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {

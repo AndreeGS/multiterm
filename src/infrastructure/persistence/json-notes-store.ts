@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { type Note, parseNotes } from '../../domain/notes/note.js';
-import { readJson, writeJsonAtomic } from './atomic-json.js';
+import { readJson, saveJson } from './atomic-json.js';
 
 /**
  * Notas ficam em um notes.json separado do config.json: o conteudo pode
@@ -17,11 +17,8 @@ export class JsonNotesStore {
     return parseNotes(readJson(this.file));
   }
 
-  save(notes: Note[]): void {
-    try {
-      writeJsonAtomic(this.file, { notes });
-    } catch (error) {
-      console.error('[notes] falha ao salvar:', error);
-    }
+  /** `false` = nao gravou (ja foi registrado); quem chama tenta de novo. */
+  save(notes: Note[]): boolean {
+    return saveJson(this.file, { notes });
   }
 }

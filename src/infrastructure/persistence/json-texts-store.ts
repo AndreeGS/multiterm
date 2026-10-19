@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { type CanvasText, parseCanvasTexts } from '../../domain/canvas/text.js';
-import { readJson, writeJsonAtomic } from './atomic-json.js';
+import { readJson, saveJson } from './atomic-json.js';
 
 /** Textos da area livre em um texts.json proprio, como as notas. */
 export class JsonTextsStore {
@@ -14,11 +14,8 @@ export class JsonTextsStore {
     return parseCanvasTexts(readJson(this.file));
   }
 
-  save(texts: CanvasText[]): void {
-    try {
-      writeJsonAtomic(this.file, { texts });
-    } catch (error) {
-      console.error('[texts] falha ao salvar:', error);
-    }
+  /** `false` = nao gravou (ja foi registrado); quem chama tenta de novo. */
+  save(texts: CanvasText[]): boolean {
+    return saveJson(this.file, { texts });
   }
 }

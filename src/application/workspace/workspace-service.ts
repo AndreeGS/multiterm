@@ -11,6 +11,7 @@ import {
   type Workspace,
 } from '../../domain/workspace/workspace.js';
 import type { JsonConfigStore } from '../../infrastructure/persistence/json-config-store.js';
+import { DebouncedSave } from '../debounced-save.js';
 
 const SAVE_DEBOUNCE_MS = 400;
 
@@ -22,7 +23,7 @@ const SAVE_DEBOUNCE_MS = 400;
  */
 export class WorkspaceService {
   private config: AppConfig;
-  private timer: NodeJS.Timeout | null = null;
+  private readonly saver = new DebouncedSave(SAVE_DEBOUNCE_MS, () => this.store.save(this.config));
 
   constructor(private readonly store: JsonConfigStore) {
     this.config = store.load();
@@ -134,11 +135,7 @@ export class WorkspaceService {
 
   /** Grava imediatamente (usado no encerramento do app). */
   flush(): void {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
-    this.store.save(this.config);
+    this.saver.flush();
   }
 
   private patchWorkspace(id: string, patch: Partial<Omit<Workspace, 'id'>>): void {
@@ -150,11 +147,6 @@ export class WorkspaceService {
   }
 
   private scheduleSave(): void {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      this.store.save(this.config);
-    }, SAVE_DEBOUNCE_MS);
-    this.timer.unref?.();
+    this.saver.schedule();
   }
 }

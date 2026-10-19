@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { parseTaskLists, type TaskList } from '../../domain/tasks/task-list.js';
-import { readJson, writeJsonAtomic } from './atomic-json.js';
+import { readJson, saveJson } from './atomic-json.js';
 
 /** Listas de tarefas em um tasks.json proprio, como as notas. */
 export class JsonTasksStore {
@@ -14,11 +14,8 @@ export class JsonTasksStore {
     return parseTaskLists(readJson(this.file));
   }
 
-  save(lists: TaskList[]): void {
-    try {
-      writeJsonAtomic(this.file, { lists });
-    } catch (error) {
-      console.error('[tasks] falha ao salvar:', error);
-    }
+  /** `false` = nao gravou (ja foi registrado); quem chama tenta de novo. */
+  save(lists: TaskList[]): boolean {
+    return saveJson(this.file, { lists });
   }
 }

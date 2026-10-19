@@ -147,14 +147,17 @@ export class App {
     if (state.recoveredFiles.length > 0) void this.warnRecoveredFiles(state.recoveredFiles);
   }
 
-  /** Arquivo de dados corrompido: o main ja o guardou de lado; aqui so avisa. */
+  /** Arquivo de dados corrompido ou ilegivel: o main ja o guardou de lado; aqui so avisa. */
   private async warnRecoveredFiles(files: readonly RecoveredFileNotice[]): Promise<void> {
     const lines = files.map((item) => {
+      const problem = item.reason === 'unreadable' ? 'nao deu para ler' : 'corrompido';
       const outcome = item.fromBackup ? 'restaurado do backup' : 'sem backup, comecou vazio';
-      const kept = item.movedTo ? `\n  original guardado em ${item.movedTo}` : '';
-      return `• ${item.file}: ${outcome}${kept}`;
+      const kept = item.movedTo
+        ? `\n  original guardado em ${item.movedTo}`
+        : '\n  o original ficou onde estava e nao sera regravado ate reabrir o app';
+      return `• ${item.file} (${problem}): ${outcome}${kept}`;
     });
-    await openAlert('Arquivo de dados corrompido', lines.join('\n'));
+    await openAlert('Arquivo de dados com problema', lines.join('\n'));
   }
 
   private setPendingSession(terminals: SavedTerminal[]): void {
