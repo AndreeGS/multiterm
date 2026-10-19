@@ -123,7 +123,7 @@ export class TerminalService {
 }
 
 /** Garante um diretorio existente e absoluto; cai no home se invalido. */
-function resolveCwd(cwd: string): string {
+export function resolveCwd(cwd: string): string {
   const candidate = cwd && isAbsolute(cwd) ? cwd : resolve(homedir(), cwd || '.');
   try {
     if (statSync(candidate).isDirectory()) return candidate;
