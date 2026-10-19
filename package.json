@@ -21,7 +21,7 @@
     "start:no-sandbox": "npm run build && electron . --no-sandbox",
     "app:install": "npm run build && node scripts/install-desktop.mjs",
     "app:uninstall": "node scripts/install-desktop.mjs --uninstall",
-    "dist": "npm run build && mkdir -p build && node scripts/make-icon.mjs build/icon.png 512 && electron-builder --linux"
+    "dist": "npm run build && mkdir -p build && node scripts/make-icon.mjs build/icon.png 512 && electron-builder --linux --publish never"
   },
   "dependencies": {
     "@xterm/addon-clipboard": "^0.2.0",

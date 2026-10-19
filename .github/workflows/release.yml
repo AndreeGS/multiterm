@@ -19,7 +19,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
       - run: npm test
+      # A tag precisa bater com a versao do package.json: e ela que da nome aos arquivos.
+      - name: Confere a versao
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      # O electron-builder nao publica sozinho (--publish never no script): quem cria a release e o gh abaixo.
       - run: npm run dist
       - name: Publica a release
         env:
