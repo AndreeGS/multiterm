@@ -1,7 +1,9 @@
 import { trapFocus } from './modal.js';
 
 import {
+  DEFAULT_EDITOR,
   defaultSettings,
+  editorArgv,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   THEMES,
@@ -55,6 +57,11 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
           Na area livre, linha ligando cada nota e lista de tarefas ao terminal vinculado
         </label>
       </section>
+      <section>
+        <label class="settings-label" for="editor">Editor ("Abrir no editor")</label>
+        <input type="text" id="editor" spellcheck="false" placeholder="${DEFAULT_EDITOR}" />
+        <div class="settings-hint">Programa e argumentos (ex.: <code>code</code>, <code>cursor</code>, <code>subl -n</code>); o diretorio do terminal vai no fim.</div>
+      </section>
       <div class="modal-actions">
         <button type="button" id="reset">Restaurar padrao</button>
         <span class="spacer"></span>
@@ -72,6 +79,15 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
     const scalesBox = modal.querySelector<HTMLElement>('#scales')!;
     const showLinks = modal.querySelector<HTMLInputElement>('#show-links')!;
     showLinks.addEventListener('change', () => update({ showLinks: showLinks.checked }));
+    const editorInput = modal.querySelector<HTMLInputElement>('#editor')!;
+    editorInput.addEventListener('input', () => {
+      editorInput.classList.toggle('invalid', !!editorInput.value.trim() && !editorArgv(editorInput.value, '.'));
+    });
+    // Vale ao sair do campo (ou Enter); vazio volta ao padrao.
+    editorInput.addEventListener('change', () => {
+      const value = editorInput.value.trim() || DEFAULT_EDITOR;
+      if (editorArgv(value, '.')) update({ editorCommand: value });
+    });
 
     const themeButtons = new Map<ThemeId, HTMLButtonElement>();
     for (const theme of THEMES) {
@@ -105,6 +121,10 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
       fontValue.textContent = `${settings.fontSize}px`;
       fontPreview.style.fontSize = `${settings.fontSize}px`;
       showLinks.checked = settings.showLinks;
+      if (document.activeElement !== editorInput) {
+        editorInput.value = settings.editorCommand;
+        editorInput.classList.remove('invalid');
+      }
     };
 
     const update = (patch: Partial<Settings>) => {

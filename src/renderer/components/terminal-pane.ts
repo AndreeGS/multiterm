@@ -5,6 +5,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
+import { describeStatus, formatStatus, type WorktreeStatus } from '../../domain/git/worktree.js';
 import type { TerminalSnapshot } from '../../domain/terminal/types.js';
 import { totalTokens, type UsageTotals } from '../../domain/usage/types.js';
 import type { CanvasRect } from '../../domain/workspace/layout.js';
@@ -52,7 +53,14 @@ export interface PaneCallbacks {
   onFocus(id: string): void;
   onMaximize(id: string): void;
   onClose(id: string): void;
+  /** Diff do worktree do terminal. */
+  onShowDiff(id: string): void;
+  /** Abre o diretorio do terminal no editor das configuracoes. */
+  onOpenEditor(id: string): void;
 }
+
+/** Focar o terminal pede o status do worktree, mas no maximo uma vez neste intervalo. */
+const GIT_STATUS_ON_FOCUS_MS = 5000;
 
 /**
  * Um painel = cabecalho + instancia de xterm ligada a uma sessao do main.
@@ -76,6 +84,8 @@ export class TerminalPane implements Panel {
   private readonly colorBtn: HTMLButtonElement;
   private readonly usageEl: HTMLElement;
   private usage: UsageTotals | null = null;
+  private readonly gitEl: HTMLButtonElement;
+  private gitRequestedAt = 0;
   private readonly observer: ResizeObserver;
   private snapshot: TerminalSnapshot;
   /**
@@ -138,8 +148,11 @@ export class TerminalPane implements Panel {
 
     this.usageEl = el('span', 'pane-usage');
     this.usageEl.hidden = true;
+    this.gitEl = button('', 'Ver diff do worktree', () => this.callbacks.onShowDiff(this.id));
+    this.gitEl.className = 'pane-git';
+    this.gitEl.hidden = true;
 
-    header.append(this.dot, title, this.usageEl, actions);
+    header.append(this.dot, title, this.gitEl, this.usageEl, actions);
 
     const body = el('div', 'pane-body');
     this.searchInput = el('input', 'search-input');
@@ -316,6 +329,22 @@ export class TerminalPane implements Panel {
 
   focus(): void {
     this.term.focus();
+    // Voce voltou a olhar o terminal: o worktree pode ter mudado por fora (outro editor, git na mao).
+    if (this.snapshot.worktree && Date.now() - this.gitRequestedAt > GIT_STATUS_ON_FOCUS_MS) {
+      this.gitRequestedAt = Date.now();
+      this.api.requestWorktreeStatus(this.id);
+    }
+  }
+
+  /** `+novos ~alterados ↑frente` do worktree; `null` esconde. */
+  setGitStatus(status: WorktreeStatus | null): void {
+    this.gitEl.hidden = status === null || !this.snapshot.worktree;
+    if (!status) return;
+    const text = formatStatus(status);
+    this.gitEl.textContent = text || '✓';
+    this.gitEl.classList.toggle('dirty', status.changed + status.untracked > 0);
+    this.gitEl.classList.toggle('conflict', status.conflicts > 0);
+    this.gitEl.title = `⎇ ${this.snapshot.worktree?.branch ?? ''}\n${describeStatus(status)}\n\nClique para ver o diff`;
   }
 
   /**
@@ -507,6 +536,9 @@ export class TerminalPane implements Panel {
       { label: 'Cor…', run: () => void this.pickColor() },
       { label: 'Interromper (Ctrl+C)', run: () => void this.api.interruptTerminal(this.id) },
       { label: 'Reiniciar shell', run: () => void this.restart() },
+      null,
+      ...(this.snapshot.worktree ? [{ label: 'Ver diff do worktree', run: () => this.callbacks.onShowDiff(this.id) }] : []),
+      { label: 'Abrir no editor', run: () => this.callbacks.onOpenEditor(this.id) },
       null,
       { label: 'Fechar terminal', hint: 'Ctrl+Shift+W', danger: true, run: () => this.callbacks.onClose(this.id) },
     ]);
