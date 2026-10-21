@@ -80,6 +80,7 @@ npm start          # roda direto do diretorio do projeto
 npm run dev        # abre com DevTools
 npm run typecheck  # tsc --noEmit (main) e o renderer sem tipos do Node
 npm run lint       # eslint: promessas soltas e afins
+npm run check      # typecheck + lint + test (o que o CI roda antes do smoke)
 npm test           # testes unitarios do dominio (node:test, sem Electron)
 npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 ```
@@ -563,6 +564,14 @@ Regras que mantem o acoplamento baixo:
 - Testes unitarios ficam em `src/test/unit/*.test.ts`. O `npm test` empacota
   cada arquivo com esbuild (os imports `.js` apontam para `.ts`, o que o Node
   sozinho nao resolve) e roda com `node --test`.
+- Ate 12 terminais usam o renderizador WebGL ao mesmo tempo (acima de ~16
+  contextos o Chromium derruba o mais antigo). Os slots ficam com os terminais
+  na tela: quem sai de vista (outra pagina, outro workspace, atras de um
+  maximizado) devolve o seu depois de 2s, e o resto usa o renderizador DOM.
+- A camada das linhas de vinculo so redesenha enquanto algo pode estar se
+  mexendo (arrasto, um instante depois de clique ou roda, ou quando o App
+  avisa); parada, nao custa nada. Arrastando uma quina ou divisor, o xterm se
+  reajusta no maximo a cada 120ms e uma ultima vez ao soltar.
 - O output dos ptys cruza o IPC em lotes de ~16ms (`main/output-batcher.ts`),
   com uma entrada por terminal, e o `App` entrega cada uma ao painel pelo id.
   Cada chunk tem um `seq`; o replay diz ate qual `seq` ja trouxe, e o painel

@@ -209,6 +209,8 @@ export class App {
       const moved = pane instanceof TerminalPane && pane.workspaceId !== snapshot.workspaceId;
       if (pane instanceof TerminalPane) pane.update(snapshot);
       this.trackAttention(snapshot);
+      // A linha do vinculo pinta o estado do terminal (aguardando/pedido).
+      this.links.invalidate();
       // O 🔗 das notas e listas mostra o nome do terminal.
       if (renamed) this.refreshLinks();
       if (moved) this.sync();
@@ -260,7 +262,7 @@ export class App {
         if (this.focusedId) void this.closePane(this.focusedId);
         return;
       case 'maximize-pane':
-        if (this.focusedId) this.board.toggleMaximize(this.focusedId);
+        if (this.focusedId) this.toggleMaximize(this.focusedId);
         return;
       case 'rename-pane':
         if (this.focusedId) this.panes.get(this.focusedId)?.rename();
@@ -471,7 +473,7 @@ export class App {
     }
     if (focused) {
       items.push(
-        { label: 'Maximizar / restaurar painel em foco', hint: 'Ctrl+Shift+M', run: () => this.board.toggleMaximize(focused) },
+        { label: 'Maximizar / restaurar painel em foco', hint: 'Ctrl+Shift+M', run: () => this.toggleMaximize(focused) },
         { label: 'Fechar painel em foco', hint: 'Ctrl+Shift+W', run: () => void this.closePane(focused) },
       );
     }
@@ -631,6 +633,7 @@ export class App {
     for (const source of this.linkSources()) {
       source.showLink(source.terminalId ? this.linkLabel(source.terminalId) : null);
     }
+    this.links.invalidate();
   }
 
   private linkLabel(terminalId: string): LinkLabel | null {
@@ -1010,7 +1013,7 @@ export class App {
       onFocus: (id: string) => this.focus(id),
       onClose: (id: string) => void this.closePane(id),
       onMaximize: (id: string) => {
-        this.board.toggleMaximize(id);
+        this.toggleMaximize(id);
         this.focus(id);
       },
       onSend: (sourceId: string, text: string, pick: boolean) => this.sendToTerminal(sourceId, text, pick),
@@ -1054,6 +1057,12 @@ export class App {
     if (neighbor) this.goTo(neighbor);
   }
 
+  private toggleMaximize(id: string): void {
+    this.board.toggleMaximize(id);
+    // Maximizar pelo teclado nao passa por clique: a camada de vinculos precisa saber.
+    this.links.kick();
+  }
+
   /** Troca de pagina na grade; o foco nao fica num painel que saiu da tela. */
   private changePage(delta: number): void {
     this.board.setPage(this.board.currentPage + delta);
@@ -1085,6 +1094,8 @@ export class App {
       return;
     }
     this.focusedId = id;
+    // Focar pode trazer o painel para a frente ou mover a vista ate ele.
+    this.links.kick();
     for (const [paneId, pane] of this.panes) pane.setFocused(paneId === id);
     this.panes.get(id)?.focus();
     this.acknowledge(id);
@@ -1115,6 +1126,8 @@ export class App {
     this.grid.element.hidden = !hasPanes || this.board !== this.grid;
     this.canvas.element.hidden = this.board !== this.canvas;
     this.board.setPanes(visible.map((id) => this.panes.get(id)!));
+    // Paineis entraram, sairam ou mudaram de lugar (a vista pode ainda assentar).
+    this.links.kick();
     visible.forEach((id, index) => {
       const header = this.panes.get(id)?.header;
       if (!header) return;

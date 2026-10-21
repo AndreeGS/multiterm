@@ -9,14 +9,15 @@ import { describeStatus, formatStatus, type WorktreeStatus } from '../../domain/
 import type { TerminalSnapshot } from '../../domain/terminal/types.js';
 import { totalTokens, type UsageTotals } from '../../domain/usage/types.js';
 import type { CanvasRect } from '../../domain/workspace/layout.js';
+import type { ThemeId } from '../../domain/workspace/settings.js';
 import type { MultiTermApi } from '../../shared/contract.js';
 import { shortenPath } from '../paths.js';
 import { matchShortcut } from '../shortcuts.js';
-import { MIN_CONTRAST, TERMINAL_THEMES, type Appearance } from '../theme.js';
+import { MIN_CONTRAST, SEARCH_DECORATIONS, TERMINAL_THEMES, type Appearance } from '../theme.js';
 import { openColorMenu, paneColorVar } from './color-menu.js';
 import { openContextMenu } from './context-menu.js';
 import { openConfirm } from './dialogs.js';
-import { beginRename, button, el, type Panel } from './panel.js';
+import { beginRename, button, DRAG_END_EVENT, el, isDragging, type Panel } from './panel.js';
 import { formatTokens, money } from './usage-bar.js';
 
 export const STATUS_LABEL: Record<TerminalSnapshot['status'], string> = {
@@ -29,25 +30,24 @@ export const STATUS_LABEL: Record<TerminalSnapshot['status'], string> = {
 
 /**
  * Terminais com renderizador WebGL ao mesmo tempo. O Chromium derruba o
- * contexto mais antigo acima de ~16; o resto usa o renderizador DOM.
+ * contexto mais antigo acima de ~16; o resto usa o renderizador DOM. Os slots
+ * vao para os terminais na tela: quem sai de vista (outra pagina, outro
+ * workspace, atras de um maximizado) devolve o seu depois de um tempo.
  */
 const MAX_WEBGL = 12;
 let webglInUse = 0;
+/** Terminais na tela sem WebGL, esperando um slot vagar (em ordem de chegada). */
+const webglWaiting = new Set<TerminalPane>();
+/** Fora de vista por mais que isto, o terminal devolve o slot (paginar rapido nao recria contextos). */
+const WEBGL_RELEASE_MS = 2000;
 
 /** Espera do tamanho final antes de avisar o pty: cada resize e um SIGWINCH e um redesenho da TUI. */
 const PTY_RESIZE_DELAY_MS = 80;
+/** Durante um arrasto, o xterm se reajusta no maximo uma vez neste intervalo. */
+const DRAG_FIT_MS = 120;
 /** Confirmacoes de output desenhado vao agrupadas neste intervalo. */
 const ACK_INTERVAL_MS = 50;
 
-/** Destaque das ocorrencias da busca (o addon exige cores #RRGGBB). */
-const SEARCH_DECORATIONS = {
-  matchBackground: '#6b5410',
-  matchBorder: '#c9a227',
-  matchOverviewRuler: '#c9a227',
-  activeMatchBackground: '#c27c0e',
-  activeMatchBorder: '#ffcf4d',
-  activeMatchColorOverviewRuler: '#ffcf4d',
-};
 
 export interface PaneCallbacks {
   onFocus(id: string): void;
@@ -101,8 +101,15 @@ export class TerminalPane implements Panel {
   private scale = 1;
   private sending: Promise<void> = Promise.resolve();
   private webgl: WebglAddon | null = null;
+  /** O contexto foi perdido (GPU resetada): nao tenta de novo neste terminal. */
+  private webglLost = false;
+  private theme: ThemeId;
+  private visible = false;
+  private webglReleaseTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly visibility: IntersectionObserver;
   /** Frame agendado para o fit (varios pedidos no mesmo frame viram um). */
   private fitFrame = 0;
+  private dragFitTimer: ReturnType<typeof setTimeout> | null = null;
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   /** Bytes ja desenhados ainda nao confirmados ao main (vao juntos, a cada ~50ms). */
   private unacked = 0;
@@ -118,6 +125,7 @@ export class TerminalPane implements Panel {
     this.snapshot = snapshot;
     this.rect = rect;
     this.fontSize = appearance.fontSize;
+    this.theme = appearance.theme;
 
     this.element = el('div', 'pane');
     this.element.dataset.id = snapshot.id;
@@ -213,7 +221,12 @@ export class TerminalPane implements Panel {
       writeText: (_selection, text) => navigator.clipboard.writeText(text),
     }));
     this.term.open(body);
-    this.loadWebgl();
+    // Pega (ou devolve) um slot de WebGL conforme o painel entra ou sai da tela.
+    this.visibility = new IntersectionObserver((entries) => {
+      const last = entries[entries.length - 1];
+      if (last) this.setVisible(last.isIntersecting);
+    });
+    this.visibility.observe(this.element);
     body.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       this.callbacks.onFocus(this.id);
@@ -224,6 +237,7 @@ export class TerminalPane implements Panel {
     this.term.attachCustomKeyEventHandler((event) => this.handleKey(event));
 
     this.observer = new ResizeObserver(() => this.refit());
+    window.addEventListener(DRAG_END_EVENT, this.onDragEnd);
     this.observer.observe(body);
 
     this.update(snapshot);
@@ -310,10 +324,14 @@ export class TerminalPane implements Panel {
   }
 
   setAppearance(appearance: Appearance): void {
+    const themeChanged = appearance.theme !== this.theme;
+    this.theme = appearance.theme;
     this.term.options.theme = TERMINAL_THEMES[appearance.theme];
     this.term.options.minimumContrastRatio = MIN_CONTRAST[appearance.theme];
     this.fontSize = appearance.fontSize;
     this.applyFontSize();
+    // Busca aberta: repinta as ocorrencias com as cores do tema novo.
+    if (themeChanged && !this.searchBar.hidden && this.searchInput.value) this.findNext(false, true);
   }
 
   private applyFontSize(): void {
@@ -353,12 +371,28 @@ export class TerminalPane implements Panel {
    * pedidos, e so o ultimo tamanho importa.
    */
   refit(): void {
-    if (this.fitFrame) return;
+    if (this.fitFrame || this.dragFitTimer) return;
+    // Arrastando uma quina ou divisor, o reflow do xterm a cada frame pesa: ajusta
+    // de tempos em tempos e uma ultima vez ao soltar.
+    if (isDragging()) {
+      this.dragFitTimer = setTimeout(() => {
+        this.dragFitTimer = null;
+        this.fitNow();
+      }, DRAG_FIT_MS);
+      return;
+    }
     this.fitFrame = requestAnimationFrame(() => {
       this.fitFrame = 0;
       this.fitNow();
     });
   }
+
+  private readonly onDragEnd = (): void => {
+    if (!this.dragFitTimer) return;
+    clearTimeout(this.dragFitTimer);
+    this.dragFitTimer = null;
+    this.refit();
+  };
 
   private fitNow(): void {
     if (!this.element.isConnected || this.element.clientHeight === 0) return;
@@ -379,16 +413,52 @@ export class TerminalPane implements Panel {
   }
 
   /** GPU quando ha contexto sobrando; se o contexto se perder, volta ao DOM. */
+  private setVisible(visible: boolean): void {
+    this.visible = visible;
+    if (visible) {
+      if (this.webglReleaseTimer) clearTimeout(this.webglReleaseTimer);
+      this.webglReleaseTimer = null;
+      this.loadWebgl();
+      return;
+    }
+    webglWaiting.delete(this);
+    if (!this.webgl || this.webglReleaseTimer) return;
+    this.webglReleaseTimer = setTimeout(() => {
+      this.webglReleaseTimer = null;
+      if (this.visible) return;
+      this.disposeWebgl();
+      TerminalPane.grantWebgl();
+    }, WEBGL_RELEASE_MS);
+  }
+
+  /** Um slot vagou: vai para o primeiro terminal na tela que esperava. */
+  private static grantWebgl(): void {
+    for (const pane of webglWaiting) {
+      if (webglInUse >= MAX_WEBGL) return;
+      pane.loadWebgl();
+    }
+  }
+
   private loadWebgl(): void {
-    if (webglInUse >= MAX_WEBGL) return;
+    if (this.webgl || this.webglLost) return;
+    if (webglInUse >= MAX_WEBGL) {
+      webglWaiting.add(this);
+      return;
+    }
+    webglWaiting.delete(this);
     try {
       const addon = new WebglAddon();
-      addon.onContextLoss(() => this.disposeWebgl());
+      addon.onContextLoss(() => {
+        this.webglLost = true;
+        this.disposeWebgl();
+        TerminalPane.grantWebgl();
+      });
       this.term.loadAddon(addon);
       this.webgl = addon;
       webglInUse++;
     } catch {
       // sem WebGL (GPU bloqueada, --disable-gpu): fica no renderizador DOM
+      this.webglLost = true;
     }
   }
 
@@ -459,14 +529,21 @@ export class TerminalPane implements Panel {
 
   dispose(): void {
     this.observer.disconnect();
+    window.removeEventListener(DRAG_END_EVENT, this.onDragEnd);
+    this.visibility.disconnect();
+    webglWaiting.delete(this);
+    if (this.webglReleaseTimer) clearTimeout(this.webglReleaseTimer);
     if (this.fitFrame) cancelAnimationFrame(this.fitFrame);
+    if (this.dragFitTimer) clearTimeout(this.dragFitTimer);
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     if (this.ackTimer) clearTimeout(this.ackTimer);
     // O terminal pode seguir vivo sem este painel: nao deixa o pty pausado.
     if (this.unacked > 0) this.api.ackOutput(this.id, this.unacked);
+    const hadWebgl = this.webgl !== null;
     this.disposeWebgl();
     this.term.dispose();
     this.element.remove();
+    if (hadWebgl) TerminalPane.grantWebgl();
   }
 
   /** Carrega o output ja produzido antes deste painel existir. */
@@ -505,7 +582,7 @@ export class TerminalPane implements Panel {
       this.searchCount.textContent = '';
       return;
     }
-    const options = { incremental, decorations: SEARCH_DECORATIONS };
+    const options = { incremental, decorations: SEARCH_DECORATIONS[this.theme] };
     if (backwards) this.search.findPrevious(query, options);
     else this.search.findNext(query, options);
   }

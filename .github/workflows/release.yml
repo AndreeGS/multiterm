@@ -9,22 +9,33 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm test
-      # A tag precisa bater com a versao do package.json: e ela que da nome aos arquivos.
+      # A tag precisa bater com a versao do package.json: e ela que da nome aos arquivos. Antes de tudo: falha em segundos.
       - name: Confere a versao
         run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      # Electron (npm ci) e o que o electron-builder baixa (appimage, fpm...).
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+          key: electron-release-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: npm run check
+      - run: xvfb-run -a npm run smoke
       # O electron-builder nao publica sozinho (--publish never no script): quem cria a release e o gh abaixo.
       - run: npm run dist
       - name: Publica a release

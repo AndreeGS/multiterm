@@ -14,18 +14,24 @@ interface Point {
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-/** Intervalo da checagem enquanto nao ha linhas (para notar um vinculo novo). */
-const IDLE_CHECK_MS = 250;
+/**
+ * Depois de um clique, roda ou redimensionamento da janela, continua
+ * redesenhando por este tempo: o zoom da area livre so reposiciona os paineis
+ * ~140ms depois da ultima roda, e um painel trazido para a frente muda o que
+ * cobre o que.
+ */
+const SETTLE_MS = 400;
 
 /**
  * Camada SVG por cima dos paineis com as linhas de vinculo. Nao ouve eventos
- * (pointer-events: none) e se redesenha a cada frame lendo a posicao real dos
- * paineis — assim acompanha arrasto, zoom, pan, troca de layout e de pagina
- * sem cada um desses lugares precisar avisar. So escreve no DOM quando a
- * geometria muda.
+ * (pointer-events: none) e desenha lendo a posicao real dos paineis, entao
+ * acompanha arrasto, zoom, pan, troca de layout e de pagina sem cada um
+ * desses lugares calcular nada. So escreve no DOM quando a geometria muda.
  *
- * Sem nada para desenhar (grade, vinculos desligados, nenhum vinculo), o
- * redesenho por frame para e so uma checagem barata roda de tempos em tempos.
+ * Redesenha por frame so enquanto algo pode estar se mexendo: durante um
+ * arrasto, a linha provisoria do 🔗 e um instante depois de cada clique ou
+ * roda do mouse. Parado, nao custa nada; o App avisa (`invalidate`/`kick`)
+ * quando paineis entram, saem ou mudam de estado.
  */
 export class LinkLayer {
   readonly element = document.createElementNS(SVG_NS, 'svg');
@@ -33,49 +39,53 @@ export class LinkLayer {
   /** Linha provisoria enquanto voce arrasta o 🔗 ate um terminal. */
   private draft: { from: Point; to: Point } | null = null;
   private signature = '';
-  /** Checagem lenta agendada (sem nada a desenhar); `null` = redesenhando por frame. */
-  private idleTimer: ReturnType<typeof setTimeout> | null = null;
+  private frame = 0;
+  /** Ate quando (performance.now) seguir redesenhando sem outro aviso. */
+  private hotUntil = 0;
 
   constructor(
     private readonly container: HTMLElement,
     private readonly pairs: () => LinkPair[],
   ) {
     this.element.classList.add('link-layer');
+    const kick = () => this.kick();
+    for (const type of ['pointerdown', 'pointerup', 'wheel'] as const) {
+      window.addEventListener(type, kick, { capture: true, passive: true });
+    }
+    window.addEventListener('resize', kick);
     // No proximo frame: quem fornece os pares ainda esta sendo construido.
-    requestAnimationFrame(this.tick);
+    this.invalidate();
+  }
+
+  /** Redesenha uma vez, no proximo frame (ex.: um terminal mudou de estado e a linha, de cor). */
+  invalidate(): void {
+    if (!this.frame) this.frame = requestAnimationFrame(this.tick);
+  }
+
+  /** Algo comecou a se mexer: redesenha por frame ate assentar. */
+  kick(): void {
+    this.hotUntil = performance.now() + SETTLE_MS;
+    this.invalidate();
   }
 
   private readonly tick = (): void => {
+    this.frame = 0;
     const pairs = this.enabled ? this.pairs() : [];
-    if (pairs.length === 0 && !this.draft) {
-      this.render('');
-      this.idleTimer = setTimeout(() => {
-        this.idleTimer = null;
-        requestAnimationFrame(this.tick);
-      }, IDLE_CHECK_MS);
-      return;
-    }
-    this.draw(pairs);
-    requestAnimationFrame(this.tick);
+    if (pairs.length === 0 && !this.draft) this.render('');
+    else this.draw(pairs);
+    const moving = this.draft !== null || document.body.classList.contains('dragging') || performance.now() < this.hotUntil;
+    if (moving) this.frame = requestAnimationFrame(this.tick);
   };
-
-  /** Sai da checagem lenta ja: a linha provisoria precisa seguir o mouse desde o inicio. */
-  private wake(): void {
-    if (!this.idleTimer) return;
-    clearTimeout(this.idleTimer);
-    this.idleTimer = null;
-    requestAnimationFrame(this.tick);
-  }
 
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
-    this.wake();
+    this.invalidate();
   }
 
   /** Coordenadas de tela (clientX/Y); `null` apaga a linha provisoria. */
   setDraft(from: Point | null, to?: Point): void {
     this.draft = from && to ? { from, to } : null;
-    if (this.draft) this.wake();
+    this.invalidate();
   }
 
   private draw(pairs: LinkPair[]): void {
