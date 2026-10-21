@@ -63,7 +63,7 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
 
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
-    trapFocus(overlay);
+    const release = trapFocus(overlay);
 
     const themesBox = modal.querySelector<HTMLElement>('#themes')!;
     const fontInput = modal.querySelector<HTMLInputElement>('#font')!;
@@ -124,6 +124,7 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
     const close = () => {
       overlay.remove();
       document.removeEventListener('keydown', onKey, true);
+      release();
       resolve();
     };
     const onKey = (event: KeyboardEvent) => {

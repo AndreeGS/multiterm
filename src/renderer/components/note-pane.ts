@@ -58,13 +58,7 @@ export class NotePane implements Panel {
     const title = el('div', 'pane-title');
     title.append(this.nameEl, this.infoEl);
     title.title = 'Duplo clique para renomear';
-    title.addEventListener('dblclick', () =>
-      beginRename(this.nameEl, this.note.title, (name) => {
-        this.note = { ...this.note, title: name.trim() };
-        this.api.updateNote(this.id, { title: name });
-        this.render();
-      }),
-    );
+    title.addEventListener('dblclick', () => this.rename());
 
     this.chip = linkChip(() => this.id, this.callbacks);
     renderLinkChip(this.chip, null);
@@ -127,6 +121,14 @@ export class NotePane implements Panel {
 
   refit(): void {
     // textarea se ajusta sozinho ao painel.
+  }
+
+  rename(): void {
+    beginRename(this.nameEl, this.note.title, (name) => {
+      this.note = { ...this.note, title: name.trim() };
+      this.api.updateNote(this.id, { title: name });
+      this.render();
+    }, () => this.focus());
   }
 
   focus(): void {

@@ -15,6 +15,7 @@ export type Shortcut =
   | { kind: 'next-attention' }
   | { kind: 'workspaces' }
   | { kind: 'help' }
+  | { kind: 'rename-pane' }
   | { kind: 'focus-index'; index: number }
   | { kind: 'focus-step'; delta: 1 | -1 };
 
@@ -32,6 +33,8 @@ export function matchShortcut(event: KeyboardEvent, inTerminal: boolean): Shortc
   }
   // F1: lista de atalhos.
   if (event.key === 'F1' && !ctrl && !alt && !shift) return { kind: 'help' };
+  // F2: renomear o painel em foco, como em gerenciadores de arquivos.
+  if (event.key === 'F2' && !ctrl && !alt && !shift) return { kind: 'rename-pane' };
   if (!ctrl || alt) return null;
 
   // Ctrl+PageUp/PageDown: painel anterior/seguinte, como abas do navegador.

@@ -19,6 +19,7 @@ import { NotePane } from './components/note-pane.js';
 import { openSettingsDialog } from './components/settings-dialog.js';
 import { openAlert, openConfirm } from './components/dialogs.js';
 import { openWorkspaceDialog, type WorkspaceAction, type WorkspaceRow } from './components/workspace-dialog.js';
+import { isModalOpen } from './components/modal.js';
 import type { Board, LinkLabel, Panel } from './components/panel.js';
 import { TaskPane } from './components/task-pane.js';
 import { STATUS_LABEL, terminalPlace, TerminalPane } from './components/terminal-pane.js';
@@ -78,7 +79,7 @@ export class App {
       onNewNote: () => void this.createNote(),
       onNewTaskList: () => void this.createTaskList(),
       onLayout: (next) => this.setLayout(next),
-      onPage: (delta) => this.board.setPage(this.board.currentPage + delta),
+      onPage: (delta) => this.changePage(delta),
       onNextAttention: () => this.goToNextAttention(),
       onRestoreSession: () => void this.restoreSession(),
       onDiscardSession: () => void this.discardSession(),
@@ -223,6 +224,8 @@ export class App {
 
     window.addEventListener('keydown', (event) => {
       if (event.key === 'Alt') document.body.classList.add('show-indexes');
+      // Com um dialogo aberto, a tecla e dele: Ctrl+Shift+W nao fecha o painel atras.
+      if (isModalOpen()) return;
       const shortcut = matchShortcut(event, this.isTypingInTerminal(event));
       if (!shortcut) return;
       event.preventDefault();
@@ -253,6 +256,9 @@ export class App {
         return;
       case 'maximize-pane':
         if (this.focusedId) this.board.toggleMaximize(this.focusedId);
+        return;
+      case 'rename-pane':
+        if (this.focusedId) this.panes.get(this.focusedId)?.rename();
         return;
     }
   }
@@ -503,9 +509,13 @@ export class App {
     } finally {
       this.dialogOpen = false;
     }
-    chosen?.run();
-    // Fechou sem escolher (Esc): o foco volta para onde estava.
-    if (this.focusedId === focused && focused) this.panes.get(focused)?.focus();
+    // Fechou sem escolher (Esc): o foco volta para onde estava. Escolhendo, quem
+    // decide o foco e a acao (que pode ter aberto outro dialogo).
+    if (!chosen) {
+      if (focused) this.panes.get(focused)?.focus();
+      return;
+    }
+    chosen.run();
   }
 
   /**
@@ -766,7 +776,11 @@ export class App {
     } finally {
       this.dialogOpen = false;
     }
-    chosen?.run();
+    if (!chosen) {
+      if (this.focusedId) this.panes.get(this.focusedId)?.focus();
+      return;
+    }
+    chosen.run();
   }
 
   private async deleteTemplate(template: TerminalTemplate): Promise<void> {
@@ -986,6 +1000,13 @@ export class App {
   private removePane(id: string): void {
     const pane = this.panes.get(id);
     if (!pane) return;
+    // Fechar o painel em foco passa o foco ao vizinho (o seguinte, ou o anterior se era o ultimo).
+    let neighbor: string | undefined;
+    if (this.focusedId === id) {
+      const ids = this.visibleIds();
+      const index = ids.indexOf(id);
+      if (index >= 0) neighbor = ids[index + 1] ?? ids[index - 1];
+    }
     this.panes.delete(id);
     this.attention.delete(id);
     this.toolbar.setAttention(this.attention.size);
@@ -1001,6 +1022,14 @@ export class App {
       this.refreshLinks();
     }
     this.sync();
+    if (neighbor) this.goTo(neighbor);
+  }
+
+  /** Troca de pagina na grade; o foco nao fica num painel que saiu da tela. */
+  private changePage(delta: number): void {
+    this.board.setPage(this.board.currentPage + delta);
+    const visible = this.board.visiblePanes();
+    if (visible.length > 0 && !visible.some((pane) => pane.id === this.focusedId)) this.focus(visible[0]!.id);
   }
 
   /** Muda o layout por acao do usuario: reflete na UI e persiste. */
@@ -1097,6 +1126,7 @@ const SHORTCUTS_HELP = [
   'Ctrl+Shift+A — proximo terminal aguardando',
   'Ctrl+Shift+M — maximizar / restaurar painel',
   'Ctrl+Shift+W — fechar painel',
+  'F2 — renomear painel',
   'Alt+1..9 — ir para o painel N',
   'Ctrl+PgUp / PgDn — painel anterior / seguinte',
   'Ctrl+, — configuracoes',
@@ -1105,6 +1135,10 @@ const SHORTCUTS_HELP = [
   'Ctrl+Shift+C / V — copiar / colar',
   'Ctrl+Shift+F — buscar no scrollback',
   'Botao direito — menu do terminal',
+  '',
+  'Na lista de tarefas:',
+  '↑ / ↓ — percorrer · Espaco — concluir · Enter — editar',
+  'Delete — apagar · Alt+↑ / ↓ — mover',
   '',
   'Area livre: arraste o fundo para mover, Ctrl+roda para zoom.',
 ].join('\n');

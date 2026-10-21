@@ -78,7 +78,7 @@ export function openNewTerminalDialog(
 
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
-    trapFocus(overlay);
+    const release = trapFocus(overlay);
 
     const dirInput = modal.querySelector<HTMLInputElement>('#dir')!;
     const nameInput = modal.querySelector<HTMLInputElement>('#name')!;
@@ -199,6 +199,7 @@ export function openNewTerminalDialog(
       settled = true;
       overlay.remove();
       document.removeEventListener('keydown', onKey, true);
+      release();
       resolve(result);
     };
 

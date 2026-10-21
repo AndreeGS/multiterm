@@ -37,7 +37,6 @@ interface DialogButton {
 
 function showDialog(title: string, message: string | undefined, buttons: DialogButton[]): Promise<boolean> {
   return new Promise((resolve) => {
-    const previous = document.activeElement as HTMLElement | null;
     const overlay = document.createElement('div');
     overlay.className = 'overlay dialog-overlay';
     const modal = document.createElement('div');
@@ -69,7 +68,7 @@ function showDialog(title: string, message: string | undefined, buttons: DialogB
     modal.append(actions);
     overlay.append(modal);
     document.body.append(overlay);
-    trapFocus(overlay);
+    const release = trapFocus(overlay);
 
     let settled = false;
     function close(value: boolean): void {
@@ -77,7 +76,7 @@ function showDialog(title: string, message: string | undefined, buttons: DialogB
       settled = true;
       overlay.remove();
       document.removeEventListener('keydown', onKey, true);
-      previous?.focus?.();
+      release();
       resolve(value);
     }
     // Captura no document: nada atras do modal (terminal, atalhos) recebe tecla nenhuma.

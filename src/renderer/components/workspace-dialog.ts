@@ -47,7 +47,7 @@ export function openWorkspaceDialog(rows: WorkspaceRow[], canCreate: boolean): P
     modal.append(heading, list, createRow);
     overlay.append(modal);
     document.body.append(overlay);
-    trapFocus(overlay);
+    const release = trapFocus(overlay);
 
     let settled = false;
     const close = (action: WorkspaceAction | null) => {
@@ -55,6 +55,7 @@ export function openWorkspaceDialog(rows: WorkspaceRow[], canCreate: boolean): P
       settled = true;
       overlay.remove();
       document.removeEventListener('keydown', onKey, true);
+      release();
       resolve(action);
     };
 
