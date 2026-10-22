@@ -51,6 +51,10 @@ export class TaskPane implements Panel {
   private doneCollapsed = false;
   /** Item sendo arrastado para reordenar. */
   private draggingId: string | null = null;
+  /** Linha onde o teclado esta (a unica com tabindex 0); sobrevive ao render. */
+  private cursorId: string | null = null;
+  /** Depois do proximo render, devolve o foco a linha do cursor. */
+  private refocusRow = false;
   private fontSize: number;
   private scale = 1;
 
@@ -75,13 +79,7 @@ export class TaskPane implements Panel {
     const title = el('div', 'pane-title');
     title.append(this.nameEl, this.infoEl);
     title.title = 'Duplo clique para renomear';
-    title.addEventListener('dblclick', () =>
-      beginRename(this.nameEl, this.list.title, (name) => {
-        this.list = { ...this.list, title: name.trim() };
-        this.api.updateTaskList(this.id, { title: name });
-        this.render();
-      }),
-    );
+    title.addEventListener('dblclick', () => this.rename());
 
     this.chip = linkChip(() => this.id, this.callbacks);
     renderLinkChip(this.chip, null);
@@ -109,6 +107,11 @@ export class TaskPane implements Panel {
         this.add(this.input.value);
       }
       if (event.key === 'Escape') this.input.value = '';
+      // Seta para baixo entra na lista.
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        this.rows()[0]?.focus();
+      }
     });
 
     this.pendingEl = el('ul', 'tasks-list');
@@ -151,6 +154,14 @@ export class TaskPane implements Panel {
 
   refit(): void {
     // A lista rola sozinha dentro do painel.
+  }
+
+  rename(): void {
+    beginRename(this.nameEl, this.list.title, (name) => {
+      this.list = { ...this.list, title: name.trim() };
+      this.api.updateTaskList(this.id, { title: name });
+      this.render();
+    }, () => this.focus());
   }
 
   focus(): void {
@@ -302,16 +313,91 @@ export class TaskPane implements Panel {
     this.doneToggle.textContent = `${this.doneCollapsed ? '▸' : '▾'} Concluidas (${done.length})`;
     this.doneEl.hidden = this.doneCollapsed || done.length === 0;
     this.doneEl.replaceChildren(...done.map((item) => this.renderItem(item, false)));
+    this.placeCursor();
+  }
+
+  /** Linhas visiveis, na ordem da tela (pendentes e, se abertas, as concluidas). */
+  private rows(): HTMLElement[] {
+    return [...this.body.querySelectorAll<HTMLElement>('.tasks-item')].filter((row) => !row.closest('[hidden]'));
+  }
+
+  /** Roving tabindex: so a linha do cursor entra no Tab; recupera o foco se ele estava na lista. */
+  private placeCursor(): void {
+    const rows = this.rows();
+    const current = rows.find((row) => row.dataset.id === this.cursorId) ?? rows[0];
+    for (const row of rows) row.tabIndex = row === current ? 0 : -1;
+    if (this.refocusRow) {
+      this.refocusRow = false;
+      if (current) current.focus();
+      else this.input.focus();
+    }
+  }
+
+  /** Prepara o foco para depois de um commit: a linha `id`, ou a vizinha se ela sumir de vista. */
+  private keepCursor(row: HTMLElement, id: string, leaving: boolean): void {
+    const rows = this.rows();
+    const index = rows.indexOf(row);
+    const neighbor = rows[index + 1] ?? rows[index - 1];
+    this.cursorId = leaving ? (neighbor?.dataset.id ?? null) : id;
+    this.refocusRow = true;
+  }
+
+  private onRowKey(event: KeyboardEvent, row: HTMLElement, item: TaskItem): void {
+    if (event.target !== row) return;
+    const rows = this.rows();
+    const index = rows.indexOf(row);
+    const handled = () => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && event.altKey && !item.done) {
+      handled();
+      const pending = this.list.items.filter((entry) => !entry.done);
+      const at = pending.findIndex((entry) => entry.id === item.id);
+      const up = event.key === 'ArrowUp';
+      if (up ? at <= 0 : at >= pending.length - 1) return;
+      this.keepCursor(row, item.id, false);
+      // move() poe antes de: subir e ficar antes do anterior; descer e ficar antes do que vem depois do seguinte.
+      this.move(item.id, up ? pending[at - 1]!.id : pending[at + 2]?.id ?? null);
+    } else if (event.key === 'ArrowDown' && !event.altKey) {
+      handled();
+      rows[index + 1]?.focus();
+    } else if (event.key === 'ArrowUp' && !event.altKey) {
+      handled();
+      (rows[index - 1] ?? this.input).focus();
+    } else if (event.key === ' ') {
+      handled();
+      // A tarefa muda de secao; o cursor fica no lugar (vai a vizinha) para marcar varias seguidas.
+      this.keepCursor(row, item.id, true);
+      this.toggle(item.id);
+    } else if (event.key === 'Enter' && event.ctrlKey && !item.done) {
+      handled();
+      void this.send(item, event.shiftKey);
+    } else if ((event.key === 'Enter' && !event.ctrlKey) || event.key === 'F2') {
+      handled();
+      const text = row.querySelector<HTMLElement>('.tasks-text');
+      if (text) this.beginEdit(row as HTMLLIElement, text, item);
+    } else if (event.key === 'Delete') {
+      handled();
+      this.keepCursor(row, item.id, true);
+      this.remove(item.id);
+    }
   }
 
   private renderItem(item: TaskItem, sortable: boolean): HTMLLIElement {
     const row = el('li', 'tasks-item');
     row.dataset.id = item.id;
+    row.tabIndex = -1;
+    row.addEventListener('keydown', (event) => this.onRowKey(event, row, item));
+    row.addEventListener('focus', () => {
+      this.cursorId = item.id;
+    });
 
     const check = el('input', 'tasks-check');
     check.type = 'checkbox';
     check.checked = item.done;
     check.title = item.done ? 'Voltar para pendentes' : 'Concluir';
+    check.tabIndex = -1; // pelo teclado, Espaco na linha
     check.addEventListener('change', () => this.toggle(item.id));
 
     const text = el('span', 'tasks-text');
@@ -334,6 +420,7 @@ export class TaskPane implements Panel {
     if (!item.done) {
       const sendBtn = button('▶', '', () => void this.send(item, false));
       sendBtn.className = 'tasks-send';
+      sendBtn.tabIndex = -1; // pelo teclado, Ctrl+Enter na linha
       sendBtn.title = (this.linkName ? `Enviar como prompt para ${this.linkName}` : 'Enviar como prompt (escolher o terminal)') +
         '\nShift+clique: escolher outro terminal (e vincular a ele)';
       sendBtn.addEventListener('click', (event) => {
@@ -343,7 +430,9 @@ export class TaskPane implements Panel {
       }, { capture: true });
       row.append(sendBtn);
     }
-    row.append(button('✕', 'Apagar tarefa', () => this.remove(item.id)));
+    const removeBtn = button('✕', 'Apagar tarefa', () => this.remove(item.id));
+    removeBtn.tabIndex = -1; // pelo teclado, Delete na linha
+    row.append(removeBtn);
     if (sortable) this.makeSortable(row, item.id);
     return row;
   }
@@ -365,6 +454,11 @@ export class TaskPane implements Panel {
     };
     input.addEventListener('blur', () => finish(true), { once: true });
     input.addEventListener('keydown', (event) => {
+      // Terminando pelo teclado, o foco volta a linha (ou a vizinha, se a tarefa foi apagada).
+      if (event.key === 'Enter' || event.key === 'Escape') {
+        this.cursorId = item.id;
+        this.refocusRow = true;
+      }
       if (event.key === 'Enter') input.blur();
       if (event.key === 'Escape') finish(false);
       event.stopPropagation();

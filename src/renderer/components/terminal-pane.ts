@@ -512,8 +512,8 @@ export class TerminalPane implements Panel {
     ]);
   }
 
-  private rename(): void {
-    beginRename(this.nameEl, this.snapshot.name, (name) => void this.api.renameTerminal(this.id, name));
+  rename(): void {
+    beginRename(this.nameEl, this.snapshot.name, (name) => void this.api.renameTerminal(this.id, name), () => this.focus());
   }
 
   private async pasteClipboard(): Promise<void> {

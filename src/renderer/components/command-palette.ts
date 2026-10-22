@@ -33,7 +33,7 @@ export function openPalette(items: PaletteItem[], placeholder: string): Promise<
     modal.append(input, list);
     overlay.append(modal);
     document.body.append(overlay);
-    trapFocus(overlay);
+    const release = trapFocus(overlay);
 
     let visible: PaletteItem[] = items;
     let selected = 0;
@@ -80,6 +80,7 @@ export function openPalette(items: PaletteItem[], placeholder: string): Promise<
       settled = true;
       overlay.remove();
       document.removeEventListener('keydown', onKey, true);
+      release();
       resolve(chosen);
     };
     const choose = (index: number) => close(visible[index] ?? null);

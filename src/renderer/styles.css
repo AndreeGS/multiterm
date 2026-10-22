@@ -658,6 +658,8 @@ body.show-indexes .pane-header[data-index]::before {
   line-height: 1.4;
 }
 .tasks-item:hover { background: var(--hover-bg); }
+.tasks-item:focus { outline: none; }
+.tasks-item:focus-visible { outline: 1px solid var(--border-active); outline-offset: -1px; }
 .tasks-item[draggable="true"] { cursor: grab; }
 .tasks-item.dragging { opacity: 0.4; }
 .tasks-item.drop-before { border-top-color: var(--border-active); }

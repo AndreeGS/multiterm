@@ -29,6 +29,8 @@ export class TerminalGrid implements Board {
   private maximizedId: string | null = null;
   private panes: Panel[] = [];
   private gutterEls: HTMLElement[] = [];
+  /** Layout para o qual os divisores atuais foram criados. */
+  private gutterLayout: GridLayoutId | null = null;
 
   constructor(
     layout: GridLayoutId,
@@ -130,20 +132,40 @@ export class TerminalGrid implements Board {
     const template = gridTemplate(layout);
 
     // Remove do DOM apenas o que saiu de vista; os paineis em si continuam vivos.
+    // Os divisores ficam enquanto o layout desenhado for o mesmo.
+    const keepGutters = layout === this.gutterLayout;
     for (const child of [...this.element.children]) {
+      if (keepGutters && this.gutterEls.includes(child as HTMLElement)) continue;
       if (!visible.some((pane) => pane.element === child)) {
         (child as HTMLElement).style.gridArea = '';
+        delete (child as HTMLElement).dataset.gridArea;
         child.remove();
       }
     }
+    // Quem ja esta na grade nao e reanexado: mover o no tira o foco do xterm e
+    // a posicao de rolagem; so ajusta o tamanho quem chegou ou mudou de celula.
+    const moved: Panel[] = [];
     visible.forEach((pane, index) => {
       const cell = template.cells[index]!;
-      pane.element.style.gridArea =
-        `${cell.row + 1} / ${cell.col + 1} / span ${cell.rowSpan} / span ${cell.colSpan}`;
-      this.element.appendChild(pane.element);
+      const area = `${cell.row + 1} / ${cell.col + 1} / span ${cell.rowSpan} / span ${cell.colSpan}`;
+      const attached = pane.element.parentNode === this.element;
+      // Compara com o que foi escrito, nao com style.gridArea (o navegador normaliza o texto).
+      if (!attached || pane.element.dataset.gridArea !== area) moved.push(pane);
+      pane.element.dataset.gridArea = area;
+      pane.element.style.gridArea = area;
+      if (!attached) this.element.appendChild(pane.element);
       pane.setMaximized(pane.id === this.maximizedId);
     });
 
+    if (!keepGutters) this.buildGutters(layout, template);
+    this.applyTracks(layout);
+
+    for (const pane of moved) pane.refit();
+    this.onPagesChange();
+  }
+
+  private buildGutters(layout: GridLayoutId, template: ReturnType<typeof gridTemplate>): void {
+    this.gutterLayout = layout;
     this.gutterEls = gutters(template).map((gutter) => {
       const node = el('div', `gutter gutter-${gutter.axis}`);
       node.title = 'Arraste para redimensionar · duplo clique iguala';
@@ -156,10 +178,6 @@ export class TerminalGrid implements Board {
       this.element.appendChild(node);
       return node;
     });
-    this.applyTracks(layout);
-
-    for (const pane of visible) pane.refit();
-    this.onPagesChange();
   }
 
   /** Escreve as proporcoes no CSS da grade e reposiciona os divisores. */

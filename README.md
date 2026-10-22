@@ -94,6 +94,7 @@ npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 | `Ctrl+Shift+L` | Nova lista de tarefas |
 | `Ctrl+Shift+W` | Fechar o painel em foco |
 | `Ctrl+Shift+M` | Maximizar / restaurar o painel em foco |
+| `F2` | Renomear o painel em foco |
 | `Ctrl+Shift+P` | Paleta: ir para qualquer painel ou executar qualquer acao |
 | `Alt+1` … `Alt+9` | Ir direto para o painel N (segurar `Alt` mostra os numeros) |
 | `Ctrl+PageDown` / `Ctrl+PageUp` | Painel seguinte / anterior |
@@ -108,7 +109,10 @@ npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 | Duplo clique no nome | Renomear |
 
 Os atalhos com `Ctrl+Shift`, `Alt+N` e `Ctrl+PageUp/PageDown` valem mesmo com o
-foco dentro de um terminal, e nao chegam ao shell.
+foco dentro de um terminal, e nao chegam ao shell. Com um dialogo aberto
+(paleta, configuracoes, confirmacao...), nenhum atalho global age: a tecla e
+do dialogo, e ao fechar o foco volta para onde estava. Fechar o painel em foco
+passa o foco ao vizinho, e trocar de pagina leva o foco para a pagina nova.
 
 A paleta (`Ctrl+Shift+P`) lista os paineis abertos (os que pedem atencao com
 `●`) e as acoes do app; digitar filtra, sem diferenciar acento nem caixa.
@@ -340,6 +344,10 @@ as notas (maximizar, renomear com duplo clique).
 - Duplo clique no texto edita (`Enter` confirma, `Esc` cancela; apagar o texto
   remove a tarefa). Passando o mouse aparece o `✕` para apagar.
 - Arrastar uma pendente sobre outra reordena.
+- **Pelo teclado**: `↓` no campo entra na lista; `↑`/`↓` percorrem as tarefas,
+  `Espaco` conclui (o cursor fica na vizinha, para marcar varias seguidas),
+  `Enter` ou `F2` edita, `Delete` apaga, `Alt+↑`/`Alt+↓` move a pendente e
+  `Ctrl+Enter` envia ao terminal vinculado.
 - O cabecalho mostra `N/M concluidas` e uma barra de progresso; `⌫` apaga
   todas as concluidas (com confirmacao).
 - Salva sozinho em `tasks.json`. Fechar (`✕`) **apaga** a lista; se ela tiver

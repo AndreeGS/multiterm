@@ -23,6 +23,8 @@ export interface Panel {
   setScale(scale: number): void;
   /** Tema e tamanho de fonte vindos das configuracoes. */
   setAppearance(appearance: Appearance): void;
+  /** Renomeia ali mesmo no cabecalho (duplo clique ou F2). */
+  rename(): void;
   dispose(): void;
 }
 
@@ -87,8 +89,17 @@ export function drag(
   window.addEventListener('mouseup', up);
 }
 
-/** Renomeacao inline: troca o texto por um input ate Enter/blur (ou Esc). */
-export function beginRename(target: HTMLElement, current: string, onCommit: (name: string) => void): void {
+/**
+ * Renomeacao inline: troca o texto por um input ate Enter/blur (ou Esc).
+ * `onKeyEnd` roda quando termina pelo teclado (Enter/Esc), para o foco voltar
+ * ao painel; terminando por clique fora, o foco fica onde o clique o pos.
+ */
+export function beginRename(
+  target: HTMLElement,
+  current: string,
+  onCommit: (name: string) => void,
+  onKeyEnd?: () => void,
+): void {
   const input = document.createElement('input');
   input.className = 'rename-input';
   input.value = current;
@@ -105,8 +116,14 @@ export function beginRename(target: HTMLElement, current: string, onCommit: (nam
   };
   input.addEventListener('blur', () => finish(true), { once: true });
   input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') input.blur();
-    if (event.key === 'Escape') finish(false);
+    if (event.key === 'Enter') {
+      input.blur();
+      onKeyEnd?.();
+    }
+    if (event.key === 'Escape') {
+      finish(false);
+      onKeyEnd?.();
+    }
     event.stopPropagation();
   });
 }
