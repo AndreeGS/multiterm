@@ -1,6 +1,6 @@
 {
   "name": "multiterm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Central visual para executar e acompanhar varios terminais/agentes simultaneamente",
   "license": "MIT",
   "desktopName": "multiterm.desktop",

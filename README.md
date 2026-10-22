@@ -27,14 +27,14 @@ Node, git nem compilador.
 menu e o comando `multiterm` no PATH, com o sandbox do Chromium configurado:
 
 ```bash
-sudo apt install ./multiterm_0.1.0_amd64.deb
+sudo apt install ./multiterm_0.2.0_amd64.deb
 ```
 
 **Qualquer distro (AppImage)** — um arquivo so, sem instalar:
 
 ```bash
-chmod +x MultiTerm-0.1.0-x86_64.AppImage
-./MultiTerm-0.1.0-x86_64.AppImage
+chmod +x MultiTerm-0.2.0-x86_64.AppImage
+./MultiTerm-0.2.0-x86_64.AppImage
 ```
 
 No Ubuntu 22.04+ o AppImage precisa da libfuse2 (`sudo apt install libfuse2t64`
