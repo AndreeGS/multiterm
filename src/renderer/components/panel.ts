@@ -67,6 +67,14 @@ export function button(label: string, title: string, onClick: () => void): HTMLB
  * Arrasto com o mouse: segue o ponteiro na janela inteira ate soltar, e marca
  * o body para que terminais nao roubem os eventos nem selecionem texto.
  */
+/** Disparado na janela quando um arrasto termina (quem adiou trabalho durante ele refaz agora). */
+export const DRAG_END_EVENT = 'multiterm:drag-end';
+
+/** Ha um arrasto (mover, redimensionar, divisor) em andamento? */
+export function isDragging(): boolean {
+  return document.body.classList.contains('dragging');
+}
+
 export function drag(
   start: MouseEvent,
   cursor: string,
@@ -84,6 +92,7 @@ export function drag(
     document.body.classList.remove('dragging');
     document.body.style.cursor = '';
     onEnd?.();
+    window.dispatchEvent(new Event(DRAG_END_EVENT));
   };
   window.addEventListener('mousemove', move);
   window.addEventListener('mouseup', up);

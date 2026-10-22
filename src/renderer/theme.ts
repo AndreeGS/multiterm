@@ -1,3 +1,4 @@
+import type { ISearchDecorationOptions } from '@xterm/addon-search';
 import type { ITheme } from '@xterm/xterm';
 import type { Settings, ThemeId } from '../domain/workspace/settings.js';
 
@@ -51,6 +52,29 @@ export const TERMINAL_THEMES: Record<ThemeId, ITheme> = {
 export const MIN_CONTRAST: Record<ThemeId, number> = {
   dark: 1,
   paper: 4.5,
+};
+
+/**
+ * Destaque das ocorrencias da busca no terminal (o addon exige #RRGGBB). No
+ * papel, o marrom escuro do tema escuro apagaria o texto: la vai amarelo claro.
+ */
+export const SEARCH_DECORATIONS: Record<ThemeId, ISearchDecorationOptions> = {
+  dark: {
+    matchBackground: '#6b5410',
+    matchBorder: '#c9a227',
+    matchOverviewRuler: '#c9a227',
+    activeMatchBackground: '#c27c0e',
+    activeMatchBorder: '#ffcf4d',
+    activeMatchColorOverviewRuler: '#ffcf4d',
+  },
+  paper: {
+    matchBackground: '#f0dc94',
+    matchBorder: '#b0700f',
+    matchOverviewRuler: '#b0700f',
+    activeMatchBackground: '#e5b54f',
+    activeMatchBorder: '#8a5526',
+    activeMatchColorOverviewRuler: '#8a5526',
+  },
 };
 
 /** Tema e escala da interface vivem no <html>; o CSS faz o resto. */

@@ -13,6 +13,7 @@
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.renderer.json",
     "lint": "eslint .",
+    "check": "npm run typecheck && npm run lint && npm test",
     "test": "node scripts/build.mjs --tests && node --test 'dist/test/unit/*.test.js'",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
