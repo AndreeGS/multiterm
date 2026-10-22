@@ -7,6 +7,7 @@ import type { CanvasFramePatch } from '../domain/canvas/frame.js';
 import type { TaskListPatch } from '../domain/tasks/task-list.js';
 import type { CanvasRect, CanvasView, GridLayoutId, LayoutId, TrackSizes } from '../domain/workspace/layout.js';
 import type { Settings } from '../domain/workspace/settings.js';
+import type { WorktreeStatus } from '../domain/git/worktree.js';
 import { CHANNELS, type BootstrapState, type MultiTermApi, type TerminalOutput } from '../shared/contract.js';
 
 /** Inscreve um canal e devolve a funcao de cancelamento. */
@@ -42,6 +43,9 @@ const api: MultiTermApi = {
   gitInfo: (cwd) => ipcRenderer.invoke(CHANNELS.gitInfo, cwd),
   worktreeDirty: (worktree) => ipcRenderer.invoke(CHANNELS.worktreeDirty, worktree),
   removeWorktree: (worktree, force) => ipcRenderer.invoke(CHANNELS.worktreeRemove, worktree, force),
+  requestWorktreeStatus: (id) => ipcRenderer.send(CHANNELS.worktreeStatusRequest, id),
+  worktreeDiff: (id) => ipcRenderer.invoke(CHANNELS.worktreeDiff, id),
+  openInEditor: (id) => ipcRenderer.invoke(CHANNELS.openInEditor, id),
   saveTemplate: (input) => ipcRenderer.invoke(CHANNELS.templateSave, input),
   deleteTemplate: (id) => ipcRenderer.invoke(CHANNELS.templateDelete, id),
   switchWorkspace: (id) => ipcRenderer.invoke(CHANNELS.workspaceSwitch, id),
@@ -81,6 +85,7 @@ const api: MultiTermApi = {
   onTerminalClose: (listener) => subscribe<[string]>(CHANNELS.closed, listener),
   onUsageUpdate: (listener) => subscribe<[UsageSummary]>(CHANNELS.usageUpdate, listener),
   onFocusTerminal: (listener) => subscribe<[string]>(CHANNELS.focusTerminal, listener),
+  onWorktreeStatus: (listener) => subscribe<[string, WorktreeStatus | null]>(CHANNELS.worktreeStatus, listener),
 };
 
 contextBridge.exposeInMainWorld('multiterm', api);

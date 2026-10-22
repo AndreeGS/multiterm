@@ -19,6 +19,7 @@ import { NotePane } from './components/note-pane.js';
 import { openSettingsDialog } from './components/settings-dialog.js';
 import { openAlert, openConfirm } from './components/dialogs.js';
 import { openWorkspaceDialog, type WorkspaceAction, type WorkspaceRow } from './components/workspace-dialog.js';
+import { openDiffDialog } from './components/diff-dialog.js';
 import { isModalOpen } from './components/modal.js';
 import type { Board, LinkLabel, Panel } from './components/panel.js';
 import { TaskPane } from './components/task-pane.js';
@@ -216,6 +217,10 @@ export class App {
     this.api.onUsageUpdate((summary) => this.applyUsageSummary(summary));
     // Clicou na notificacao do sistema: vai ate o terminal.
     this.api.onFocusTerminal((id) => this.goTo(id));
+    this.api.onWorktreeStatus((id, status) => {
+      const pane = this.panes.get(id);
+      if (pane instanceof TerminalPane) pane.setGitStatus(status);
+    });
 
     // Voltar para a janela ja conta como "vi o terminal em foco".
     window.addEventListener('focus', () => {
@@ -484,7 +489,9 @@ export class App {
     if (focusedPane instanceof TerminalPane) {
       items.push({ label: `Buscar em "${focusedPane.name}"`, hint: 'Ctrl+Shift+F', run: () => focusedPane.openSearch() });
       items.push({ label: `Cor de "${focusedPane.name}"`, run: () => void focusedPane.pickColor() });
+      items.push({ label: `Abrir "${focusedPane.name}" no editor`, run: () => void this.openInEditor(focusedPane.id) });
       if (focusedPane.info.worktree) {
+        items.push({ label: `Diff do worktree de "${focusedPane.name}"`, run: () => void this.showDiff(focusedPane.id) });
         items.push({ label: `Fechar "${focusedPane.name}" e remover o worktree`, run: () => void this.closePane(focusedPane.id) });
       }
     }
@@ -957,6 +964,26 @@ export class App {
     const pane = new TerminalPane(snapshot, this.api, this.paneCallbacks(), this.settings, rect);
     this.addPane(pane);
     this.applyUsage(pane);
+    // A janela recarregada nao tem o status que o main ja mandou antes.
+    if (snapshot.worktree) this.api.requestWorktreeStatus(snapshot.id);
+  }
+
+  /** O que o agente mudou no worktree do terminal. */
+  private async showDiff(id: string): Promise<void> {
+    const pane = this.panes.get(id);
+    if (!(pane instanceof TerminalPane) || !pane.info.worktree || this.dialogOpen) return;
+    this.dialogOpen = true;
+    try {
+      await openDiffDialog(`${pane.name} · ⎇ ${pane.info.worktree.branch}`, () => this.api.worktreeDiff(id));
+    } finally {
+      this.dialogOpen = false;
+    }
+    this.api.requestWorktreeStatus(id);
+  }
+
+  private async openInEditor(id: string): Promise<void> {
+    const error = await this.api.openInEditor(id);
+    if (error) await openAlert('Abrir no editor', error);
   }
 
   private applyUsageSummary(summary: UsageSummary): void {
@@ -989,6 +1016,8 @@ export class App {
       onSend: (sourceId: string, text: string, pick: boolean) => this.sendToTerminal(sourceId, text, pick),
       onLinkGesture: (sourceId: string, event: MouseEvent) => this.beginLinkGesture(sourceId, event),
       onLinkPick: (sourceId: string) => void this.pickLink(sourceId),
+      onShowDiff: (id: string) => void this.showDiff(id),
+      onOpenEditor: (id: string) => void this.openInEditor(id),
     };
   }
 
