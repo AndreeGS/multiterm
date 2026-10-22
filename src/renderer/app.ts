@@ -19,6 +19,7 @@ import { NotePane } from './components/note-pane.js';
 import { openSettingsDialog } from './components/settings-dialog.js';
 import { openAlert, openConfirm } from './components/dialogs.js';
 import { openWorkspaceDialog, type WorkspaceAction, type WorkspaceRow } from './components/workspace-dialog.js';
+import { openDiffDialog } from './components/diff-dialog.js';
 import { isModalOpen } from './components/modal.js';
 import type { Board, LinkLabel, Panel } from './components/panel.js';
 import { TaskPane } from './components/task-pane.js';
@@ -208,6 +209,8 @@ export class App {
       const moved = pane instanceof TerminalPane && pane.workspaceId !== snapshot.workspaceId;
       if (pane instanceof TerminalPane) pane.update(snapshot);
       this.trackAttention(snapshot);
+      // A linha do vinculo pinta o estado do terminal (aguardando/pedido).
+      this.links.invalidate();
       // O 🔗 das notas e listas mostra o nome do terminal.
       if (renamed) this.refreshLinks();
       if (moved) this.sync();
@@ -216,6 +219,10 @@ export class App {
     this.api.onUsageUpdate((summary) => this.applyUsageSummary(summary));
     // Clicou na notificacao do sistema: vai ate o terminal.
     this.api.onFocusTerminal((id) => this.goTo(id));
+    this.api.onWorktreeStatus((id, status) => {
+      const pane = this.panes.get(id);
+      if (pane instanceof TerminalPane) pane.setGitStatus(status);
+    });
 
     // Voltar para a janela ja conta como "vi o terminal em foco".
     window.addEventListener('focus', () => {
@@ -255,7 +262,7 @@ export class App {
         if (this.focusedId) void this.closePane(this.focusedId);
         return;
       case 'maximize-pane':
-        if (this.focusedId) this.board.toggleMaximize(this.focusedId);
+        if (this.focusedId) this.toggleMaximize(this.focusedId);
         return;
       case 'rename-pane':
         if (this.focusedId) this.panes.get(this.focusedId)?.rename();
@@ -466,7 +473,7 @@ export class App {
     }
     if (focused) {
       items.push(
-        { label: 'Maximizar / restaurar painel em foco', hint: 'Ctrl+Shift+M', run: () => this.board.toggleMaximize(focused) },
+        { label: 'Maximizar / restaurar painel em foco', hint: 'Ctrl+Shift+M', run: () => this.toggleMaximize(focused) },
         { label: 'Fechar painel em foco', hint: 'Ctrl+Shift+W', run: () => void this.closePane(focused) },
       );
     }
@@ -484,7 +491,9 @@ export class App {
     if (focusedPane instanceof TerminalPane) {
       items.push({ label: `Buscar em "${focusedPane.name}"`, hint: 'Ctrl+Shift+F', run: () => focusedPane.openSearch() });
       items.push({ label: `Cor de "${focusedPane.name}"`, run: () => void focusedPane.pickColor() });
+      items.push({ label: `Abrir "${focusedPane.name}" no editor`, run: () => void this.openInEditor(focusedPane.id) });
       if (focusedPane.info.worktree) {
+        items.push({ label: `Diff do worktree de "${focusedPane.name}"`, run: () => void this.showDiff(focusedPane.id) });
         items.push({ label: `Fechar "${focusedPane.name}" e remover o worktree`, run: () => void this.closePane(focusedPane.id) });
       }
     }
@@ -624,6 +633,7 @@ export class App {
     for (const source of this.linkSources()) {
       source.showLink(source.terminalId ? this.linkLabel(source.terminalId) : null);
     }
+    this.links.invalidate();
   }
 
   private linkLabel(terminalId: string): LinkLabel | null {
@@ -957,6 +967,26 @@ export class App {
     const pane = new TerminalPane(snapshot, this.api, this.paneCallbacks(), this.settings, rect);
     this.addPane(pane);
     this.applyUsage(pane);
+    // A janela recarregada nao tem o status que o main ja mandou antes.
+    if (snapshot.worktree) this.api.requestWorktreeStatus(snapshot.id);
+  }
+
+  /** O que o agente mudou no worktree do terminal. */
+  private async showDiff(id: string): Promise<void> {
+    const pane = this.panes.get(id);
+    if (!(pane instanceof TerminalPane) || !pane.info.worktree || this.dialogOpen) return;
+    this.dialogOpen = true;
+    try {
+      await openDiffDialog(`${pane.name} · ⎇ ${pane.info.worktree.branch}`, () => this.api.worktreeDiff(id));
+    } finally {
+      this.dialogOpen = false;
+    }
+    this.api.requestWorktreeStatus(id);
+  }
+
+  private async openInEditor(id: string): Promise<void> {
+    const error = await this.api.openInEditor(id);
+    if (error) await openAlert('Abrir no editor', error);
   }
 
   private applyUsageSummary(summary: UsageSummary): void {
@@ -983,12 +1013,14 @@ export class App {
       onFocus: (id: string) => this.focus(id),
       onClose: (id: string) => void this.closePane(id),
       onMaximize: (id: string) => {
-        this.board.toggleMaximize(id);
+        this.toggleMaximize(id);
         this.focus(id);
       },
       onSend: (sourceId: string, text: string, pick: boolean) => this.sendToTerminal(sourceId, text, pick),
       onLinkGesture: (sourceId: string, event: MouseEvent) => this.beginLinkGesture(sourceId, event),
       onLinkPick: (sourceId: string) => void this.pickLink(sourceId),
+      onShowDiff: (id: string) => void this.showDiff(id),
+      onOpenEditor: (id: string) => void this.openInEditor(id),
     };
   }
 
@@ -1025,6 +1057,12 @@ export class App {
     if (neighbor) this.goTo(neighbor);
   }
 
+  private toggleMaximize(id: string): void {
+    this.board.toggleMaximize(id);
+    // Maximizar pelo teclado nao passa por clique: a camada de vinculos precisa saber.
+    this.links.kick();
+  }
+
   /** Troca de pagina na grade; o foco nao fica num painel que saiu da tela. */
   private changePage(delta: number): void {
     this.board.setPage(this.board.currentPage + delta);
@@ -1056,6 +1094,8 @@ export class App {
       return;
     }
     this.focusedId = id;
+    // Focar pode trazer o painel para a frente ou mover a vista ate ele.
+    this.links.kick();
     for (const [paneId, pane] of this.panes) pane.setFocused(paneId === id);
     this.panes.get(id)?.focus();
     this.acknowledge(id);
@@ -1086,6 +1126,8 @@ export class App {
     this.grid.element.hidden = !hasPanes || this.board !== this.grid;
     this.canvas.element.hidden = this.board !== this.canvas;
     this.board.setPanes(visible.map((id) => this.panes.get(id)!));
+    // Paineis entraram, sairam ou mudaram de lugar (a vista pode ainda assentar).
+    this.links.kick();
     visible.forEach((id, index) => {
       const header = this.panes.get(id)?.header;
       if (!header) return;

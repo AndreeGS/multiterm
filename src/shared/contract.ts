@@ -13,7 +13,7 @@ import type { CanvasRect, CanvasView, GridLayoutId, LayoutId, TrackSizes } from 
 import type { Settings } from '../domain/workspace/settings.js';
 import type { PaneColor } from '../domain/workspace/colors.js';
 import type { TemplateInput, TerminalTemplate } from '../domain/workspace/template.js';
-import type { GitInfo, WorktreeInfo } from '../domain/git/worktree.js';
+import type { GitInfo, WorktreeDiff, WorktreeInfo, WorktreeStatus } from '../domain/git/worktree.js';
 import type { Workspace, WorkspaceSummary } from '../domain/workspace/workspace.js';
 
 export interface BootstrapState {
@@ -97,6 +97,12 @@ export interface MultiTermApi {
   worktreeDirty(worktree: WorktreeInfo): Promise<boolean>;
   /** Apaga a pasta do worktree (a branch fica). `force` descarta mudancas. */
   removeWorktree(worktree: WorktreeInfo, force: boolean): Promise<void>;
+  /** Pede o status do worktree do terminal agora; a resposta vem por `onWorktreeStatus`. */
+  requestWorktreeStatus(id: string): void;
+  /** Diff do worktree do terminal contra a base (o main acha o worktree pelo id). */
+  worktreeDiff(id: string): Promise<WorktreeDiff>;
+  /** Abre o diretorio do terminal no editor das configuracoes; erro = mensagem para o usuario. */
+  openInEditor(id: string): Promise<string | null>;
 
   /** Salva (ou substitui, pelo nome) um template; devolve a lista atualizada. */
   saveTemplate(input: TemplateInput): Promise<TerminalTemplate[]>;
@@ -160,6 +166,8 @@ export interface MultiTermApi {
   onUsageUpdate(listener: (summary: UsageSummary) => void): () => void;
   /** Clicou na notificacao de um terminal: trazer ele para a tela. */
   onFocusTerminal(listener: (id: string) => void): () => void;
+  /** `+novos ~alterados ↑frente` de um terminal com worktree; `null` = indisponivel. */
+  onWorktreeStatus(listener: (id: string, status: WorktreeStatus | null) => void): () => void;
 }
 
 /** Output de um terminal num lote; `seq` e o do ultimo chunk incluido. */
@@ -198,6 +206,10 @@ export const CHANNELS = {
   gitInfo: 'git:info',
   worktreeDirty: 'git:worktree-dirty',
   worktreeRemove: 'git:worktree-remove',
+  worktreeStatus: 'git:worktree-status',
+  worktreeStatusRequest: 'git:worktree-status-request',
+  worktreeDiff: 'git:worktree-diff',
+  openInEditor: 'terminal:open-editor',
 
   templateSave: 'template:save',
   templateDelete: 'template:delete',

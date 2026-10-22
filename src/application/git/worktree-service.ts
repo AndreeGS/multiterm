@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isValidBranchName } from '../../domain/git/branch.js';
-import type { Git, GitInfo, WorktreeInfo } from '../../domain/git/worktree.js';
+import type { Git, GitInfo, WorktreeDiff, WorktreeInfo, WorktreeStatus } from '../../domain/git/worktree.js';
 import { worktreePath } from '../../domain/git/worktree-path.js';
 
 /**
@@ -30,6 +30,10 @@ export class WorktreeService {
   }
 
   private async createIn(repo: string, branch: string): Promise<WorktreeInfo> {
+    // A branch em que a copia principal esta agora e de onde a nova sai: e
+    // contra ela que o cabecalho conta commits e o diff compara.
+    const mainBranch = (await this.git.info(repo)).branch;
+    const base = mainBranch && mainBranch !== branch ? { base: mainBranch } : {};
     let existing = (await this.git.listWorktrees(repo)).find((entry) => entry.branch === branch);
     if (existing && !existsSync(existing.path)) {
       // Pasta apagada por fora: o git ainda a lista ate um prune, e reaproveita-la
@@ -42,12 +46,12 @@ export class WorktreeService {
       if (resolve(existing.path) === resolve(repo)) {
         throw new Error(`A branch "${branch}" esta em uso na copia principal do repositorio.`);
       }
-      return { repo, path: existing.path, branch };
+      return { repo, path: existing.path, branch, ...base };
     }
 
     const path = worktreePath(repo, branch);
     await this.git.addWorktree(repo, path, branch, !(await this.git.branchExists(repo, branch)));
-    return { repo, path, branch };
+    return { repo, path, branch, ...base };
   }
 
   private serialized<T>(repo: string, task: () => Promise<T>): Promise<T> {
@@ -63,6 +67,26 @@ export class WorktreeService {
 
   async isDirty(worktree: WorktreeInfo): Promise<boolean> {
     return this.git.isDirty(worktree.path);
+  }
+
+  /**
+   * Base para comparar: a gravada na criacao ou, em worktrees de versoes
+   * anteriores, a branch atual da copia principal.
+   */
+  private async baseOf(worktree: WorktreeInfo): Promise<string | null> {
+    if (worktree.base) return worktree.base;
+    const branch = (await this.git.info(worktree.repo)).branch;
+    return branch && branch !== worktree.branch ? branch : null;
+  }
+
+  async status(worktree: WorktreeInfo): Promise<WorktreeStatus> {
+    const [changes, base] = await Promise.all([this.git.status(worktree.path), this.baseOf(worktree)]);
+    const counts = base ? await this.git.aheadBehind(worktree.path, base) : null;
+    return { ...changes, base: counts ? base : null, ahead: counts?.ahead ?? 0, behind: counts?.behind ?? 0 };
+  }
+
+  async diff(worktree: WorktreeInfo): Promise<WorktreeDiff> {
+    return this.git.diff(worktree.path, await this.baseOf(worktree));
   }
 
   /**

@@ -10,12 +10,14 @@ import {
   type IpcMainEvent,
   type IpcMainInvokeEvent,
 } from 'electron';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { WorktreeService } from '../application/git/worktree-service.js';
+import { WorktreeStatusService } from '../application/git/worktree-status-service.js';
 import { resolveCwd, TerminalService } from '../application/terminal/terminal-service.js';
 import { NotesService } from '../application/notes/notes-service.js';
 import { TextsService } from '../application/canvas/texts-service.js';
@@ -43,7 +45,7 @@ import {
 } from '../domain/workspace/layout.js';
 import { parsePaneColor } from '../domain/workspace/colors.js';
 import { visibleBounds } from '../domain/workspace/config.js';
-import { parseSettings, WINDOW_BACKGROUND } from '../domain/workspace/settings.js';
+import { editorArgv, parseSettings, WINDOW_BACKGROUND } from '../domain/workspace/settings.js';
 import { parseTemplate } from '../domain/workspace/template.js';
 import { summarize } from '../domain/workspace/workspace.js';
 import { setSaveFailureListener, takeRecoveredFiles } from '../infrastructure/persistence/atomic-json.js';
@@ -70,6 +72,7 @@ let texts: TextsService;
 let frames: FramesService;
 let tasks: TasksService;
 const worktrees = new WorktreeService(new GitCli());
+const worktreeStatus = new WorktreeStatusService(worktrees, (id, status) => send(CHANNELS.worktreeStatus, id, status));
 const flow = new FlowControl();
 const output = new OutputBatcher((batch) => {
   send(CHANNELS.data, batch);
@@ -420,6 +423,20 @@ function registerIpc(): void {
     if (!worktree) throw new Error('Worktree invalido.');
     await worktrees.remove(worktree, force === true);
   });
+  on(CHANNELS.worktreeStatusRequest, (_event, id: unknown) => {
+    if (typeof id === 'string') worktreeStatus.request(id);
+  });
+  // O worktree vem da sessao, pelo id: o renderer nao escolhe que pasta o git le.
+  handle(CHANNELS.worktreeDiff, (_event, id: unknown) => {
+    const worktree = typeof id === 'string' ? terminals.snapshot(id)?.worktree : null;
+    if (!worktree) throw new Error('Este terminal nao tem worktree.');
+    return worktrees.diff(worktree);
+  });
+  handle(CHANNELS.openInEditor, (_event, id: unknown) => {
+    const snapshot = typeof id === 'string' ? terminals.snapshot(id) : null;
+    if (!snapshot) return 'Terminal nao encontrado.';
+    return openInEditor(snapshot.worktree?.path ?? snapshot.cwd);
+  });
   handle(CHANNELS.templateSave, (_event, input: unknown) => {
     const template = parseTemplate(input, randomUUID());
     if (template) workspace.saveTemplate(template);
@@ -560,11 +577,41 @@ function confirmQuit(event: Electron.Event, proceed: () => void): boolean {
 }
 
 /** Grava tudo e encerra os terminais. Idempotente: varios caminhos levam aqui. */
+/**
+ * Abre `dir` no editor das configuracoes, como processo solto (sobrevive ao
+ * app) e sem shell. Devolve a mensagem de erro, ou `null` se abriu.
+ */
+function openInEditor(dir: string): Promise<string | null> {
+  const command = workspace.current().settings.editorCommand;
+  const argv = editorArgv(command, dir);
+  if (!argv) return Promise.resolve('Configure o editor em Configuracoes (Ctrl+,).');
+  const [program, ...args] = argv;
+  // Sem isto, a pasta apagada viraria um ENOENT confundido com "editor nao encontrado".
+  if (!existsSync(dir)) return Promise.resolve(`A pasta ${dir} nao existe mais.`);
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(program, args, { cwd: dir, detached: true, stdio: 'ignore' });
+      child.once('spawn', () => {
+        child.unref();
+        resolve(null);
+      });
+      child.once('error', (error: NodeJS.ErrnoException) => {
+        resolve(error.code === 'ENOENT'
+          ? `"${program}" nao foi encontrado no PATH. Ajuste o editor em Configuracoes (Ctrl+,).`
+          : `Nao foi possivel abrir "${program}": ${error.message}`);
+      });
+    } catch (error) {
+      resolve(`Nao foi possivel abrir "${program}": ${(error as Error).message}`);
+    }
+  });
+}
+
 function shutdown(): void {
   if (shutDown) return;
   shutDown = true;
   persistBounds();
   usage?.stop();
+  worktreeStatus.stop();
   output.dispose();
   terminals?.closeAll();
   flushData();
@@ -648,6 +695,7 @@ if (!app.requestSingleInstanceLock()) {
       onData: (id, chunk, seq) => output.push(id, chunk, seq),
       onUpdate: (snapshot) => {
         attention.observe(snapshot);
+        worktreeStatus.observe(snapshot);
         send(CHANNELS.update, snapshot);
         // Renomear e reiniciar em outro diretorio chegam por aqui.
         persistTerminals();
@@ -657,6 +705,7 @@ if (!app.requestSingleInstanceLock()) {
         // depois recriaria a contagem (e ate uma pausa) de um terminal morto.
         output.flush();
         attention.forget(id);
+        worktreeStatus.forget(id);
         terminalRects.delete(id);
         flow.forget(id);
         clearTimeout(stallTimers.get(id));
@@ -676,6 +725,7 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc();
     createWindow();
     usage.start();
+    worktreeStatus.start();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

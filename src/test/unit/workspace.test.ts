@@ -26,7 +26,7 @@ import {
   resizeTracks,
   zoomAt,
 } from '../../domain/workspace/layout.js';
-import { defaultSettings, FONT_SIZE_MAX, parseSettings } from '../../domain/workspace/settings.js';
+import { defaultSettings, editorArgv, FONT_SIZE_MAX, parseSettings } from '../../domain/workspace/settings.js';
 
 const close = (a: number, b: number): boolean => Math.abs(a - b) < 1e-9;
 
@@ -153,6 +153,17 @@ describe('config', () => {
     assert.equal(settings.fontSize, FONT_SIZE_MAX);
     assert.equal(settings.uiScale, 1);
     assert.equal(settings.showLinks, false);
+  });
+
+  it('editor: palavras do comando e o diretorio no fim, sem shell', () => {
+    assert.deepEqual(editorArgv('code', '/p'), ['code', '/p']);
+    assert.deepEqual(editorArgv('  subl   -n ', '/p q'), ['subl', '-n', '/p q']);
+    assert.equal(editorArgv('   ', '/p'), null);
+    assert.equal(editorArgv('code\n--x', '/p'), null);
+    assert.equal(parseSettings({}).editorCommand, 'code');
+    assert.equal(parseSettings({ editorCommand: ' cursor ' }).editorCommand, 'cursor');
+    assert.equal(parseSettings({ editorCommand: '' }).editorCommand, 'code');
+    assert.equal(parseSettings({ editorCommand: 42 }).editorCommand, 'code');
   });
 });
 

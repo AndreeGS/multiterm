@@ -27,14 +27,14 @@ Node, git nem compilador.
 menu e o comando `multiterm` no PATH, com o sandbox do Chromium configurado:
 
 ```bash
-sudo apt install ./multiterm_0.1.0_amd64.deb
+sudo apt install ./multiterm_0.2.0_amd64.deb
 ```
 
 **Qualquer distro (AppImage)** — um arquivo so, sem instalar:
 
 ```bash
-chmod +x MultiTerm-0.1.0-x86_64.AppImage
-./MultiTerm-0.1.0-x86_64.AppImage
+chmod +x MultiTerm-0.2.0-x86_64.AppImage
+./MultiTerm-0.2.0-x86_64.AppImage
 ```
 
 No Ubuntu 22.04+ o AppImage precisa da libfuse2 (`sudo apt install libfuse2t64`
@@ -80,6 +80,7 @@ npm start          # roda direto do diretorio do projeto
 npm run dev        # abre com DevTools
 npm run typecheck  # tsc --noEmit (main) e o renderer sem tipos do Node
 npm run lint       # eslint: promessas soltas e afins
+npm run check      # typecheck + lint + test (o que o CI roda antes do smoke)
 npm test           # testes unitarios do dominio (node:test, sem Electron)
 npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 ```
@@ -104,7 +105,7 @@ npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 | `Ctrl+,` | Configuracoes (tema e tamanho da fonte) |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copiar / colar (o `Ctrl+C` puro continua sendo SIGINT) |
 | `Ctrl+Shift+F` (num terminal) | Buscar no scrollback (`Enter` / `Shift+Enter` navegam, `Esc` fecha) |
-| Botao direito (num terminal) | Menu: copiar, colar, buscar, limpar, renomear, cor, reiniciar, fechar |
+| Botao direito (num terminal) | Menu: copiar, colar, buscar, limpar, renomear, cor, reiniciar, diff do worktree, abrir no editor, fechar |
 | `F1` | Lista de atalhos |
 | Duplo clique no nome | Renomear |
 
@@ -184,6 +185,25 @@ nome do terminal) e o app:
   Se a branch ja existe, usa ela; se ja tem um worktree, reaproveita;
 - abre o terminal la dentro. O cabecalho mostra `⎇ <branch>`.
 
+### Acompanhar o que o agente mudou
+
+- **Status no cabecalho**: ao lado do nome aparece `+novos ~alterados ↑a frente
+  ↓atras` (ou `✓`, sem nada pendente), com o detalhe por extenso no tooltip. A
+  comparacao e com a **base**: a branch em que a copia principal estava quando
+  o worktree foi criado (worktrees de versoes anteriores comparam com a branch
+  atual da copia principal). Atualiza quando o terminal para de produzir output
+  (o agente terminou uma volta), quando voce foca o terminal e a cada minuto,
+  com `git status` sem lock opcional, para nao disputar o index com o agente.
+- **Ver diff**: clicar no status (ou no menu do terminal, ou na paleta: `Diff do
+  worktree de "<terminal>"`) abre tudo o que a branch mudou desde que saiu da
+  base: os commits, o que nao foi commitado e os arquivos novos. A lista de
+  arquivos fica a esquerda (`↑`/`↓` trocam), o diff a direita; `R` atualiza.
+  So leitura. O diff roda sem `diff.external` nem textconv do repo, e um diff
+  enorme e cortado (com aviso) em vez de travar a janela.
+- **Abrir no editor**: no menu do terminal ou na paleta, abre a pasta do
+  terminal (a do worktree, se tiver) no editor das Configuracoes — vale para
+  qualquer terminal, nao so os com worktree.
+
 Ao fechar (`✕`) um terminal com worktree, o app pergunta se remove a pasta,
 avisando se ha mudancas nao commitadas. **A branch nunca e apagada**: o que foi
 commitado continua no repositorio. Se outro terminal ainda esta no mesmo
@@ -235,7 +255,10 @@ aplicado na hora e fica salvo no `config.json`:
   (`minimumContrastRatio`), para nada sumir no fundo claro;
 - **Fonte dos terminais e notas**: de 9 a 24px. Na area livre o zoom continua
   multiplicando por cima;
-- **Tamanho da interface**: 90% a 140% para barra, cabecalhos e dialogos.
+- **Tamanho da interface**: 90% a 140% para barra, cabecalhos e dialogos;
+- **Editor**: o programa do "Abrir no editor" (padrao `code`; ex.: `cursor`,
+  `subl -n`). As palavras sao separadas por espaco e o diretorio vai no fim,
+  sem shell no meio.
 
 As cores da UI sao variaveis CSS em `renderer/styles.css` (`:root` e
 `:root[data-theme="paper"]`); as do xterm ficam em `renderer/theme.ts`, porque
@@ -541,6 +564,14 @@ Regras que mantem o acoplamento baixo:
 - Testes unitarios ficam em `src/test/unit/*.test.ts`. O `npm test` empacota
   cada arquivo com esbuild (os imports `.js` apontam para `.ts`, o que o Node
   sozinho nao resolve) e roda com `node --test`.
+- Ate 12 terminais usam o renderizador WebGL ao mesmo tempo (acima de ~16
+  contextos o Chromium derruba o mais antigo). Os slots ficam com os terminais
+  na tela: quem sai de vista (outra pagina, outro workspace, atras de um
+  maximizado) devolve o seu depois de 2s, e o resto usa o renderizador DOM.
+- A camada das linhas de vinculo so redesenha enquanto algo pode estar se
+  mexendo (arrasto, um instante depois de clique ou roda, ou quando o App
+  avisa); parada, nao custa nada. Arrastando uma quina ou divisor, o xterm se
+  reajusta no maximo a cada 120ms e uma ultima vez ao soltar.
 - O output dos ptys cruza o IPC em lotes de ~16ms (`main/output-batcher.ts`),
   com uma entrada por terminal, e o `App` entrega cada uma ao painel pelo id.
   Cada chunk tem um `seq`; o replay diz ate qual `seq` ja trouxe, e o painel
@@ -549,8 +580,10 @@ Regras que mantem o acoplamento baixo:
 - O renderer nao tem acesso a Node: `contextIsolation` ligado e uma API unica
   exposta pelo `preload`, tipada em `shared/contract.ts`.
 - Nada e executado automaticamente. O app so sobe o shell que voce pediu, no
-  diretorio que voce escolheu. O unico outro processo e o `git`, e so quando
-  voce pede um worktree (porta `Git` em `domain/git`, adaptador `GitCli`).
+  diretorio que voce escolheu. Os outros processos sao o `git` — so para
+  terminais com worktree (porta `Git` em `domain/git`, adaptador `GitCli`) —
+  e o editor, quando voce pede "Abrir no editor". O diff e o editor recebem
+  o terminal pelo id: o main e quem decide que pasta usar.
 
 ## Proximos passos naturais
 

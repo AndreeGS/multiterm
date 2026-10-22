@@ -32,6 +32,11 @@
   --scroll-thumb-hover: #47506a;
   --scroll-thumb-active: #5a6480;
   --layout-fill: rgba(110, 168, 254, 0.18);
+  --diff-add-bg: rgba(63, 185, 80, 0.16);
+  --diff-del-bg: rgba(248, 81, 73, 0.16);
+  --diff-hunk-bg: rgba(110, 168, 254, 0.08);
+  --diff-add-fg: #3fb950;
+  --diff-del-fg: #f85149;
 }
 
 /* Papel pardo: bege kraft, tinta marrom. Cores do xterm em renderer/theme.ts. */
@@ -66,6 +71,11 @@
   --scroll-thumb-hover: #b9a079;
   --scroll-thumb-active: #a68b62;
   --layout-fill: rgba(154, 91, 34, 0.18);
+  --diff-add-bg: rgba(63, 127, 42, 0.16);
+  --diff-del-bg: rgba(184, 54, 42, 0.14);
+  --diff-hunk-bg: rgba(154, 91, 34, 0.08);
+  --diff-add-fg: #3f7f2a;
+  --diff-del-fg: #b8362a;
 }
 
 * { box-sizing: border-box; }
@@ -813,6 +823,7 @@ body.show-indexes .pane-header[data-index]::before {
 /* ---------- configuracoes ---------- */
 .modal.settings { width: min(480px, calc(90vw / var(--ui-zoom))); gap: 18px; }
 .settings section { display: flex; flex-direction: column; gap: 8px; }
+.settings-hint { font-size: 11px; color: var(--fg-dim); }
 .settings-label {
   font-size: 11px;
   text-transform: uppercase;
@@ -1160,3 +1171,76 @@ button.primary.danger:hover:not(:disabled) { background: var(--error); border-co
 .workspace-rename input, .workspace-create input { flex: 1; }
 .workspace-confirm { flex: 1; font-size: 12px; }
 .workspace-create { padding-top: 8px; border-top: 1px solid var(--border); }
+
+/* ---------- worktree: status no cabecalho e diff ---------- */
+.pane-git {
+  flex: none;
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: none;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.pane-git:hover { color: var(--fg); border-color: var(--hover-border); }
+.pane-git.dirty { color: var(--idle); }
+.pane-git.conflict { color: var(--error); }
+
+.modal.diff-dialog {
+  width: calc(92vw / var(--ui-zoom));
+  height: calc(88vh / var(--ui-zoom));
+  gap: 10px;
+}
+.diff-head { display: flex; align-items: center; gap: 10px; }
+.diff-head h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff-summary { flex: 1; font-size: 12px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.diff-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 28%) 1fr;
+  gap: 10px;
+}
+.diff-files, .diff-view {
+  margin: 0;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--input-bg);
+}
+.diff-files:focus-visible, .diff-view:focus-visible { outline: 1px solid var(--border-active); }
+.diff-files { list-style: none; padding: 4px; }
+.diff-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.diff-file:hover { background: var(--hover-bg); }
+.diff-file.selected { background: var(--layout-fill); }
+.diff-file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.diff-file-counts { flex: none; font-variant-numeric: tabular-nums; color: var(--fg-dim); }
+.diff-add-count { color: var(--diff-add-fg); }
+.diff-del-count { color: var(--diff-del-fg); }
+.diff-tag { flex: none; font-size: 10px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); color: var(--fg-dim); }
+.diff-tag.added { color: var(--diff-add-fg); }
+.diff-tag.deleted { color: var(--diff-del-fg); }
+.diff-view {
+  padding: 4px 0;
+  font-family: ui-monospace, "JetBrains Mono", "Fira Code", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.diff-line { white-space: pre; padding: 0 10px; min-width: max-content; }
+.diff-line.add { background: var(--diff-add-bg); }
+.diff-line.del { background: var(--diff-del-bg); }
+.diff-line.hunk { color: var(--accent); background: var(--diff-hunk-bg); margin-top: 6px; }
+.diff-line.note { color: var(--fg-dim); font-style: italic; }
+.diff-empty { padding: 16px; color: var(--fg-dim); }

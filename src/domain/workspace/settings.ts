@@ -12,14 +12,21 @@ export interface Settings {
   uiScale: number;
   /** Linha ligando cada nota/lista ao terminal vinculado (so na area livre). */
   showLinks: boolean;
+  /**
+   * Programa para "Abrir no editor" (ex.: `code`, `cursor`, `subl -n`). O
+   * diretorio do terminal vai como ultimo argumento; sem shell.
+   */
+  editorCommand: string;
 }
 
 export const FONT_SIZE_MIN = 9;
 export const FONT_SIZE_MAX = 24;
 export const UI_SCALES: readonly number[] = [0.9, 1, 1.1, 1.25, 1.4];
+export const DEFAULT_EDITOR = 'code';
+const MAX_EDITOR_COMMAND = 200;
 
 export function defaultSettings(): Settings {
-  return { theme: 'dark', fontSize: 12, uiScale: 1, showLinks: true };
+  return { theme: 'dark', fontSize: 12, uiScale: 1, showLinks: true, editorCommand: DEFAULT_EDITOR };
 }
 
 export function isTheme(value: unknown): value is ThemeId {
@@ -39,7 +46,21 @@ export function parseSettings(raw: unknown): Settings {
     base.uiScale = input.uiScale;
   }
   if (typeof input.showLinks === 'boolean') base.showLinks = input.showLinks;
+  if (typeof input.editorCommand === 'string' && editorArgv(input.editorCommand, '.')) {
+    base.editorCommand = input.editorCommand.trim();
+  }
   return base;
+}
+
+/**
+ * Programa e argumentos para abrir `dir` no editor: as palavras do comando
+ * (separadas por espaco, sem aspas nem shell) e o diretorio no fim. `null` =
+ * comando vazio ou invalido.
+ */
+export function editorArgv(command: string, dir: string): [string, ...string[]] | null {
+  if (command.length > MAX_EDITOR_COMMAND || /[\x00-\x1f\x7f]/.test(command)) return null;
+  const [program, ...args] = command.trim().split(/\s+/).filter(Boolean);
+  return program ? [program, ...args, dir] : null;
 }
 
 /** Cor de fundo da janela antes do renderer pintar (evita um flash escuro no tema claro). */

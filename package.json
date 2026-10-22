@@ -1,6 +1,6 @@
 {
   "name": "multiterm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Central visual para executar e acompanhar varios terminais/agentes simultaneamente",
   "license": "MIT",
   "desktopName": "multiterm.desktop",
@@ -13,6 +13,7 @@
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.renderer.json",
     "lint": "eslint .",
+    "check": "npm run typecheck && npm run lint && npm test",
     "test": "node scripts/build.mjs --tests && node --test 'dist/test/unit/*.test.js'",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
