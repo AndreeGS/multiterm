@@ -875,6 +875,9 @@ body.show-indexes .pane-header[data-index]::before {
 .modal {
   /* Divide pelo zoom: com a interface ampliada o modal ainda cabe na janela. */
   width: min(560px, calc(90vw / var(--ui-zoom)));
+  /* Nunca maior que a janela: com fonte e interface grandes, o resto rola. */
+  max-height: calc(100vh / var(--ui-zoom) - 32px);
+  overflow-y: auto;
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -929,6 +932,15 @@ body.show-indexes .pane-header[data-index]::before {
 
 /* ---------- configuracoes ---------- */
 .modal.settings { width: min(480px, calc(90vw / var(--ui-zoom))); gap: 18px; }
+/* Configuracoes e longa: Fechar e Restaurar ficam sempre a vista, embaixo. */
+.modal.settings > .modal-actions {
+  position: sticky;
+  bottom: -18px;
+  margin: 0 -18px -18px;
+  padding: 12px 18px 18px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+}
 .settings section { display: flex; flex-direction: column; gap: 8px; }
 .settings-hint { font-size: 11px; color: var(--fg-dim); }
 .settings-label {
