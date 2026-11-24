@@ -2,6 +2,7 @@
  * Contrato entre main e renderer. Compartilhado pelos tres bundles
  * (main, preload, renderer) para manter o IPC tipado em um lugar so.
  */
+import type { PermissionAnswer } from '../domain/terminal/agent.js';
 import type { ReplaySnapshot, TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js';
 import type { UsageSummary } from '../domain/usage/types.js';
 import type { Note, NotePatch } from '../domain/notes/note.js';
@@ -87,6 +88,8 @@ export interface MultiTermApi {
    * o fim da volta dele nao vira aviso, porque a fila responde.
    */
   setTerminalQueued(id: string, queued: boolean): void;
+  /** Responde pelo app o pedido de permissao `askId` do terminal (`release` = deixar para o terminal). */
+  answerPermission(id: string, askId: string, answer: PermissionAnswer): void;
   /** Marca que voce ja viu este terminal (limpa o pedido de atencao). */
   acknowledgeTerminal(id: string): void;
   writeTerminal(id: string, data: string): void;
@@ -231,6 +234,7 @@ export const CHANNELS = {
   moveTerminal: 'terminal:move-workspace',
   interrupt: 'terminal:interrupt',
   setQueued: 'terminal:set-queued',
+  answerPermission: 'terminal:answer-permission',
   openExternal: 'app:open-external',
   ackOutput: 'terminal:ack-output',
   busyProgram: 'terminal:busy-program',

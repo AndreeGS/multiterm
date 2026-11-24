@@ -19,6 +19,8 @@ export interface ToolbarCallbacks {
   onRestoreSession(): void;
   onDiscardSession(): void;
   onSettings(): void;
+  /** Abre/fecha o painel de agentes. */
+  onToggleAgents(): void;
 }
 
 export class Toolbar {
@@ -34,6 +36,7 @@ export class Toolbar {
   private readonly sessionGroup = document.createElement('div');
   private readonly restoreBtn = document.createElement('button');
   private readonly workspaceBtn = document.createElement('button');
+  private readonly agentsBtn = document.createElement('button');
 
   constructor(private readonly callbacks: ToolbarCallbacks, api: MultiTermApi) {
     this.element.className = 'toolbar';
@@ -110,6 +113,11 @@ export class Toolbar {
 
     const usage = (this.usage = new UsageBar(api));
 
+    this.agentsBtn.className = 'agents-btn';
+    this.agentsBtn.textContent = '◧ Agentes';
+    this.agentsBtn.title = 'Painel com todos os agentes e o que cada um espera de voce (Ctrl+Shift+G)';
+    this.agentsBtn.addEventListener('click', () => this.callbacks.onToggleAgents());
+
     const settingsBtn = document.createElement('button');
     settingsBtn.className = 'settings-btn';
     settingsBtn.textContent = '⚙';
@@ -128,9 +136,15 @@ export class Toolbar {
       usage.element,
       this.pageGroup,
       this.layoutBtn,
+      this.agentsBtn,
       settingsBtn,
     );
   }
+  setAgentsPanel(open: boolean): void {
+    this.agentsBtn.classList.toggle('active', open);
+    this.agentsBtn.setAttribute('aria-pressed', String(open));
+  }
+
   setUsage(summary: UsageSummary): void {
     this.usage.render(summary);
   }

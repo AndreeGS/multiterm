@@ -23,6 +23,11 @@ describe('atalhos globais', () => {
     assert.equal(matchShortcut(key({ key: 'F2', shift: true }), false), null);
   });
 
+  it('Ctrl+Shift+G abre o painel de agentes, ate de dentro do terminal', () => {
+    assert.deepEqual(matchShortcut(key({ key: 'G', code: 'KeyG', ctrl: true, shift: true }), true), { kind: 'agents-panel' });
+    assert.equal(matchShortcut(key({ key: 'g', code: 'KeyG', ctrl: true }), false), null);
+  });
+
   it('Ctrl+T so fora do terminal; Ctrl+Shift+T sempre', () => {
     assert.deepEqual(matchShortcut(key({ key: 't', code: 'KeyT', ctrl: true }), false), { kind: 'new-terminal' });
     assert.equal(matchShortcut(key({ key: 't', code: 'KeyT', ctrl: true }), true), null);

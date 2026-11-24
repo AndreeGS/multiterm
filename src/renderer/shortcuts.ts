@@ -14,6 +14,7 @@ export type Shortcut =
   | { kind: 'palette' }
   | { kind: 'next-attention' }
   | { kind: 'workspaces' }
+  | { kind: 'agents-panel' }
   | { kind: 'help' }
   | { kind: 'rename-pane' }
   | { kind: 'focus-index'; index: number }
@@ -52,6 +53,7 @@ export function matchShortcut(event: KeyboardEvent, inTerminal: boolean): Shortc
       case 'p': return { kind: 'palette' };
       case 'a': return { kind: 'next-attention' };
       case 'o': return { kind: 'workspaces' };
+      case 'g': return { kind: 'agents-panel' };
       default: return null;
     }
   }

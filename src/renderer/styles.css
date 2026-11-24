@@ -137,7 +137,11 @@ button.primary:hover:not(:disabled) { background: var(--primary-hover); border-c
 #app {
   display: grid;
   grid-template-rows: auto 1fr;
+  /* A segunda coluna e o painel de agentes; fechado, ela some. */
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 0;
 }
+.toolbar { grid-column: 1 / -1; }
 
 .toolbar {
   display: flex;
@@ -555,6 +559,103 @@ body.show-indexes .pane-header[data-index]::before {
   font-size: 11px;
   text-align: center;
 }
+
+/* ---------- painel de agentes ---------- */
+.agents-btn.active { color: var(--accent); border-color: var(--border-active); }
+.agents-panel {
+  width: 300px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  zoom: var(--ui-zoom);
+}
+.agents-panel[hidden] { display: none; }
+.agents-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.agents-title { font-weight: 600; }
+.agents-count { flex: 1; color: var(--fg-dim); font-size: 11px; }
+.agents-head button { border-color: transparent; padding: 2px 6px; color: var(--fg-dim); }
+.agents-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.agents-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.agents-item:hover, .agents-item:focus-visible { border-color: var(--hover-border); background: var(--hover-bg); outline: none; }
+.agents-item.attention { border-color: var(--idle); background: var(--attention-bg); }
+.agents-item.notice { border-color: var(--notice); background: var(--notice-bg); }
+.agents-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.agents-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.agents-usage { color: var(--fg-dim); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.agents-detail, .agents-notice { color: var(--fg-dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agents-notice { color: var(--notice); }
+.agents-empty { color: var(--fg-dim); padding: 12px; text-align: center; }
+
+/* ---------- pedido de permissao do Claude ---------- */
+.permission-slot {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  /* Em cima: embaixo fica o dialogo do proprio Claude, que continua valendo. */
+  top: 10px;
+  z-index: 11;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.permission-slot:empty { display: none; }
+.permission-card {
+  pointer-events: auto;
+  max-width: 640px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--notice-bg);
+  border: 1px solid var(--notice);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px var(--shadow);
+  font-size: 12px;
+}
+.permission-title { color: var(--notice); font-weight: 600; }
+.permission-summary {
+  display: block;
+  padding: 4px 6px;
+  background: var(--input-bg);
+  border-radius: 4px;
+  font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 6.5em;
+  overflow: auto;
+  user-select: text;
+}
+.permission-actions { display: flex; gap: 6px; }
+.permission-actions button.danger { color: var(--error); border-color: var(--error); }
+.permission-card.compact { padding: 6px 8px; box-shadow: none; }
+.permission-card.compact .permission-title { display: none; }
+.permission-card.compact .permission-summary { max-height: 3.3em; }
 
 /* ---------- menu do botao direito ---------- */
 .context-menu {

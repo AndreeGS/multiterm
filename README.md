@@ -101,6 +101,7 @@ npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 | `Ctrl+PageDown` / `Ctrl+PageUp` | Painel seguinte / anterior |
 | `Ctrl+Shift+A` | Proximo terminal aguardando voce (troca de workspace se preciso) |
 | `Ctrl+Shift+O` | Workspaces: trocar, criar, renomear, apagar |
+| `Ctrl+Shift+G` | Painel de agentes |
 | `Ctrl+Enter` (numa nota) | Envia a selecao ou a linha do cursor ao terminal vinculado |
 | `Ctrl+,` | Configuracoes (tema e tamanho da fonte) |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copiar / colar (o `Ctrl+C` puro continua sendo SIGINT) |
@@ -501,7 +502,7 @@ Claude, nao precisa: os hooks (abaixo) ja avisam.
 
 Num terminal com o comando inicial `claude`, o app abre o Claude com
 `--settings <dados>/claude-hooks.json`, que liga hooks em `SessionStart`,
-`UserPromptSubmit`, `Stop`, `Notification` e `SessionEnd`. Os hooks somam com
+`UserPromptSubmit`, `Stop`, `Notification`, `PermissionRequest` e `SessionEnd`. Os hooks somam com
 os seus: nada no `~/.claude` e tocado, e o cabecalho continua mostrando so
 `claude`. Cada hook roda um script do app que manda o evento ao MultiTerm por
 um socket local (em `$XDG_RUNTIME_DIR`, so do seu usuario), com o token do
@@ -512,9 +513,9 @@ terminal. Com isso, nesse terminal:
   deixa a tela parada nao vira "aguardando", e a TUI redesenhando depois de
   terminar nao apaga o aviso. O ponto e o tooltip dizem *Claude trabalhando*,
   *aguardando voce* ou *pedindo permissao*;
-- **pedido de permissao** (ou pergunta do Claude) vira pedido explicito, com
-  o texto dele (`🔔 Claude needs your permission to use Bash`) e notificacao
-  do sistema se a janela nao estiver em foco. Responder no terminal limpa;
+- **pedido de permissao respondido pelo app** (ver abaixo), e pergunta do
+  Claude vira pedido explicito, com o texto dele e notificacao do sistema se a
+  janela nao estiver em foco;
 - **a conversa segue o `/clear` e o `/resume`**: o terminal passa a acompanhar
   a conversa nova, o consumo no cabecalho tambem, e reiniciar (`⟳`) ou
   restaurar a sessao retoma a conversa em que voce estava;
@@ -524,6 +525,36 @@ Um `claude` digitado a mao no terminal nao passa por isso (fica com o palpite
 pelo silencio), nem um comando que ja traga `--settings` ou rode com `-p`. Se o
 Claude cair sem o `SessionEnd`, o app percebe pelo programa em foreground e
 volta ao palpite. No Windows os hooks ficam desligados.
+
+### Permitir ou negar pelo app
+
+Quando o Claude pede permissao para uma ferramenta, o terminal ganha um cartao
+no topo (`Claude quer usar Bash` e o comando, o arquivo ou a URL) com
+**Permitir**, **Negar** e **No terminal**; o mesmo cartao aparece no painel de
+agentes e a paleta tem `Permitir/Negar <ferramenta> em "<terminal>"`. O cabecalho
+mostra `🔔 quer usar Bash: <comando>` e sai a notificacao do sistema.
+
+- O dialogo do proprio Claude continua no terminal ao mesmo tempo: **vale quem
+  responder primeiro**. Respondeu no terminal (qualquer tecla, nao o foco nem o
+  mouse), o cartao some;
+- *Permitir* vale so para esta chamada; para "sempre permitir" e as outras
+  opcoes do Claude, use *No terminal*, que tira o cartao e deixa o dialogo dele;
+- *Negar* manda a recusa ao Claude, que segue a volta sabendo que nao pode;
+- sem resposta em 2 minutos o cartao sai sozinho, e o pedido fica so no
+  terminal. Nada e decidido sem voce.
+
+Por baixo e o hook `PermissionRequest`: o script fica esperando a resposta do
+app pelo socket e devolve a decisao ao Claude. Nos modos que nao perguntam
+(`auto`, aceitar edicoes, bypass) o hook nem dispara.
+
+### Painel de agentes
+
+`◧ Agentes` na barra (ou `Ctrl+Shift+G`) abre uma coluna a direita com todos os
+terminais de todos os workspaces, na ordem do que precisa de voce: pedidos de
+permissao (respondiveis ali), aguardando (o que espera ha mais tempo primeiro),
+Claude trabalhando, os demais. Cada linha mostra o estado, ha quanto tempo
+espera, o workspace (quando e outro) e o consumo da conversa; clicar leva ao
+terminal, trocando de workspace se preciso. Aberto ou fechado, fica lembrado.
 
 ### Comandos do shell e espera
 

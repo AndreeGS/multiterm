@@ -23,7 +23,8 @@ import { openDiffDialog } from './components/diff-dialog.js';
 import { isModalOpen } from './components/modal.js';
 import type { Board, LinkLabel, Panel } from './components/panel.js';
 import { TaskPane } from './components/task-pane.js';
-import { AGENT_LABEL, STATUS_LABEL, terminalPlace, TerminalPane } from './components/terminal-pane.js';
+import { dotStatus, stateLabel, terminalPlace, TerminalPane } from './components/terminal-pane.js';
+import { AgentsPanel } from './components/agents-panel.js';
 import { Toolbar } from './components/toolbar.js';
 import { setHomeDir, shortenPath } from './paths.js';
 import { matchShortcut, type Shortcut } from './shortcuts.js';
@@ -59,6 +60,9 @@ export class App {
   private readonly queues = new Map<string, string>();
   private dialogOpen = false;
   private settings: Settings = defaultSettings();
+  private readonly agentsPanel: AgentsPanel;
+  /** Redesenho do painel de agentes agendado para o proximo frame. */
+  private agentsFrame = 0;
 
   constructor(
     private readonly root: HTMLElement,
@@ -87,7 +91,13 @@ export class App {
       onRestoreSession: () => void this.restoreSession(),
       onDiscardSession: () => void this.discardSession(),
       onSettings: () => void this.openSettings(),
+      onToggleAgents: () => this.toggleAgentsPanel(),
     }, api);
+    this.agentsPanel = new AgentsPanel({
+      onGo: (id) => this.goTo(id),
+      onAnswer: (id, askId, answer) => this.api.answerPermission(id, askId, answer),
+      onClose: () => this.toggleAgentsPanel(false),
+    });
 
     this.grid = new TerminalGrid(
       isGridLayout(layout) ? layout : '4',
@@ -105,7 +115,7 @@ export class App {
     this.links = new LinkLayer(wrap, () => this.linkPairs());
     wrap.append(this.emptyState, this.grid.element, this.canvas.element, this.links.element);
 
-    this.root.append(this.toolbar.element, wrap);
+    this.root.append(this.toolbar.element, wrap, this.agentsPanel.element);
     this.toolbar.setLayout(layout);
 
     this.bindGlobalEvents();
@@ -121,6 +131,8 @@ export class App {
     this.settings = state.settings;
     applyDocumentSettings(this.settings);
     this.links.setEnabled(this.settings.showLinks);
+    this.agentsPanel.setOpen(this.settings.agentsPanel);
+    this.toolbar.setAgentsPanel(this.settings.agentsPanel);
     this.recentDirs = state.recentDirs;
     this.recentCommands = state.recentCommands;
     this.templates = state.templates;
@@ -216,6 +228,7 @@ export class App {
       for (const source of this.linkSources()) {
         if (source instanceof TaskPane) source.onTerminalState(snapshot.id, snapshot.agent);
       }
+      this.refreshAgents();
       this.trackAttention(snapshot);
       // A linha do vinculo pinta o estado do terminal (aguardando/pedido).
       this.links.invalidate();
@@ -256,6 +269,7 @@ export class App {
     setInterval(() => {
       const now = Date.now();
       for (const pane of this.terminalPanes(true)) pane.renderMeta(now);
+      this.refreshAgents();
     }, 30_000);
   }
 
@@ -268,6 +282,7 @@ export class App {
       case 'palette': return void this.openCommandPalette();
       case 'next-attention': return this.goToNextAttention();
       case 'workspaces': return void this.openWorkspaces();
+      case 'agents-panel': return this.toggleAgentsPanel();
       case 'help': return void openAlert('Atalhos de teclado', SHORTCUTS_HELP);
       case 'focus-index': return this.goTo(this.visibleIds()[shortcut.index]);
       case 'focus-step': return this.stepFocus(shortcut.delta);
@@ -319,6 +334,29 @@ export class App {
   private refreshWorkspaceUi(): void {
     const elsewhere = [...this.attention].some((id) => this.panes.get(id)?.workspaceId !== this.activeWorkspace);
     this.toolbar.setWorkspace(this.workspaceName(this.activeWorkspace), elsewhere);
+    this.refreshAgents();
+  }
+
+  /** Abre/fecha o painel de agentes (e lembra a escolha). */
+  private toggleAgentsPanel(open = !this.agentsPanel.open): void {
+    if (open === this.settings.agentsPanel && open === this.agentsPanel.open) return;
+    this.applySettings({ ...this.settings, agentsPanel: open });
+    this.refreshAgents();
+  }
+
+  /** Redesenha o painel de agentes no proximo frame (varios updates viram um). */
+  private refreshAgents(): void {
+    if (!this.agentsPanel.open || this.agentsFrame) return;
+    this.agentsFrame = requestAnimationFrame(() => {
+      this.agentsFrame = 0;
+      this.agentsPanel.render(this.terminalPanes(true).map((pane) => ({
+        info: pane.info,
+        workspace: pane.workspaceId === this.activeWorkspace ? null : this.workspaceName(pane.workspaceId),
+        usage: pane.usageText,
+        dotStatus: dotStatus(pane.info),
+        stateLabel: stateLabel(pane.info),
+      })));
+    });
   }
 
   /**
@@ -501,6 +539,18 @@ export class App {
       items.push({ label: `Apagar template: ${template.name}`, run: () => void this.deleteTemplate(template) });
     }
     const focusedPane = focused ? this.panes.get(focused) : undefined;
+    for (const pane of this.terminalPanes(true)) {
+      const ask = pane.info.pendingPermission;
+      if (!ask) continue;
+      const what = `${ask.tool} em "${pane.name}"`;
+      items.push({ label: `Permitir ${what}`, detail: ask.summary, attention: true, run: () => this.api.answerPermission(pane.id, ask.id, 'allow') });
+      items.push({ label: `Negar ${what}`, detail: ask.summary, run: () => this.api.answerPermission(pane.id, ask.id, 'deny') });
+    }
+    items.push({
+      label: this.agentsPanel.open ? 'Fechar o painel de agentes' : 'Abrir o painel de agentes',
+      hint: 'Ctrl+Shift+G',
+      run: () => this.toggleAgentsPanel(),
+    });
     if (focusedPane instanceof TerminalPane) {
       items.push({ label: `Buscar em "${focusedPane.name}"`, hint: 'Ctrl+Shift+F', run: () => focusedPane.openSearch() });
       items.push({ label: `Cor de "${focusedPane.name}"`, run: () => void focusedPane.pickColor() });
@@ -841,6 +891,12 @@ export class App {
   private applySettings(settings: Settings): void {
     this.settings = settings;
     applyDocumentSettings(settings);
+    if (this.agentsPanel.open !== settings.agentsPanel) {
+      this.agentsPanel.setOpen(settings.agentsPanel);
+      this.toolbar.setAgentsPanel(settings.agentsPanel);
+      // A area dos paineis mudou de largura: as linhas de vinculo se reposicionam.
+      this.links.kick();
+    }
     // Cabecalhos mudam de altura com a escala; o ResizeObserver de cada terminal refaz o fit.
     for (const pane of this.panes.values()) pane.setAppearance(settings);
     this.links.setEnabled(settings.showLinks);
@@ -1022,6 +1078,7 @@ export class App {
     this.toolbar.setUsage(summary);
     this.usageBySession = summary.bySession;
     for (const pane of this.terminalPanes(true)) this.applyUsage(pane);
+    this.refreshAgents();
   }
 
   private applyUsage(pane: TerminalPane): void {
@@ -1083,6 +1140,7 @@ export class App {
     if (position >= 0) this.order.splice(position, 1);
     pane.dispose();
     if (this.focusedId === id) this.focusedId = null;
+    this.refreshAgents();
     // Terminal fechado de vez: quem estava vinculado a ele fica sem vinculo.
     if (pane instanceof TerminalPane) {
       for (const source of this.linkSources()) if (source.terminalId === id) source.setLink(null);
@@ -1211,6 +1269,7 @@ const SHORTCUTS_HELP = [
   'No terminal:',
   'Ctrl+Shift+C / V — copiar / colar',
   'Ctrl+Shift+F — buscar no scrollback',
+  'Ctrl+Shift+G — painel de agentes',
   'Ctrl+Shift+↑ / ↓ — prompt anterior / seguinte (shell com marcas OSC 133)',
   'Botao direito — menu do terminal',
   '',
@@ -1223,10 +1282,10 @@ const SHORTCUTS_HELP = [
 
 function paneDetail(pane: Panel): string {
   if (pane instanceof TerminalPane) {
-    const { notice, status, exitCode, agent } = pane.info;
+    const { notice } = pane.info;
     if (notice) return `🔔 ${notice}`;
     const usage = pane.usageText;
-    const state = (agent ? AGENT_LABEL[agent.phase] : STATUS_LABEL[status]) + (exitCode !== null ? ` (${exitCode})` : '');
+    const state = stateLabel(pane.info);
     return `terminal · ${state} · ${terminalPlace(pane.info)}${usage ? ` · ${usage}` : ''}`;
   }
   if (pane instanceof NotePane) return 'nota';
