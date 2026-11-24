@@ -1,7 +1,15 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isValidBranchName } from '../../domain/git/branch.js';
-import type { Git, GitInfo, WorktreeDiff, WorktreeInfo, WorktreeStatus } from '../../domain/git/worktree.js';
+import type {
+  Git,
+  GitInfo,
+  MergeResult,
+  PullRequests,
+  WorktreeDiff,
+  WorktreeInfo,
+  WorktreeStatus,
+} from '../../domain/git/worktree.js';
 import { worktreePath } from '../../domain/git/worktree-path.js';
 
 /**
@@ -12,7 +20,10 @@ export class WorktreeService {
   /** Criacao em andamento por repo: dois pedidos juntos (duplo submit) nao disputam a mesma branch. */
   private readonly queues = new Map<string, Promise<unknown>>();
 
-  constructor(private readonly git: Git) {}
+  constructor(
+    private readonly git: Git,
+    private readonly pulls: PullRequests | null = null,
+  ) {}
 
   info(cwd: string): Promise<GitInfo> {
     return this.git.info(cwd);
@@ -87,6 +98,41 @@ export class WorktreeService {
 
   async diff(worktree: WorktreeInfo): Promise<WorktreeDiff> {
     return this.git.diff(worktree.path, await this.baseOf(worktree));
+  }
+
+  /** Commita tudo o que o worktree tem (inclusive arquivos novos). */
+  async commit(worktree: WorktreeInfo, message: string): Promise<void> {
+    await this.serialized(worktree.repo, () => this.git.commitAll(worktree.path, message));
+  }
+
+  /**
+   * Mescla a branch do worktree na base, na copia principal. Precisa do
+   * worktree todo commitado: o que nao foi commitado nao iria junto.
+   */
+  async mergeIntoBase(worktree: WorktreeInfo): Promise<{ base: string; result: MergeResult }> {
+    const base = await this.requireBase(worktree);
+    if (await this.git.isDirty(worktree.path)) {
+      throw new Error('O worktree tem mudancas nao commitadas: commite antes de mesclar.');
+    }
+    const result = await this.serialized(worktree.repo, () => this.git.merge(worktree.repo, worktree.branch, base));
+    return { base, result };
+  }
+
+  /** Envia a branch e abre um PR contra a base; devolve a URL. */
+  async openPullRequest(worktree: WorktreeInfo): Promise<string> {
+    if (!this.pulls) throw new Error('Abrir PR nao esta disponivel.');
+    const base = await this.requireBase(worktree);
+    if (await this.git.isDirty(worktree.path)) {
+      throw new Error('O worktree tem mudancas nao commitadas: commite antes de abrir o PR.');
+    }
+    await this.git.push(worktree.path, worktree.branch);
+    return this.pulls.create(worktree.path, base, worktree.branch);
+  }
+
+  private async requireBase(worktree: WorktreeInfo): Promise<string> {
+    const base = await this.baseOf(worktree);
+    if (!base) throw new Error('Este worktree nao tem uma branch base para comparar.');
+    return base;
   }
 
   /**

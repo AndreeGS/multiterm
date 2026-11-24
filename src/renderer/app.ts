@@ -61,6 +61,8 @@ export class App {
   private dialogOpen = false;
   private settings: Settings = defaultSettings();
   private readonly agentsPanel: AgentsPanel;
+  /** O app foi instalado por pacote e sabe se atualizar. */
+  private canUpdate = false;
   /** Redesenho do painel de agentes agendado para o proximo frame. */
   private agentsFrame = 0;
 
@@ -92,6 +94,7 @@ export class App {
       onDiscardSession: () => void this.discardSession(),
       onSettings: () => void this.openSettings(),
       onToggleAgents: () => this.toggleAgentsPanel(),
+      onInstallUpdate: () => this.api.installUpdate(),
     }, api);
     this.agentsPanel = new AgentsPanel({
       onGo: (id) => this.goTo(id),
@@ -133,6 +136,8 @@ export class App {
     this.links.setEnabled(this.settings.showLinks);
     this.agentsPanel.setOpen(this.settings.agentsPanel);
     this.toolbar.setAgentsPanel(this.settings.agentsPanel);
+    this.toolbar.setUpdate(state.pendingUpdate);
+    this.canUpdate = state.canUpdate;
     this.recentDirs = state.recentDirs;
     this.recentCommands = state.recentCommands;
     this.templates = state.templates;
@@ -238,6 +243,7 @@ export class App {
     });
     this.api.onTerminalClose((id) => this.removePane(id));
     this.api.onUsageUpdate((summary) => this.applyUsageSummary(summary));
+    this.api.onUpdateReady((version) => this.toolbar.setUpdate(version));
     // Clicou na notificacao do sistema: vai ate o terminal.
     this.api.onFocusTerminal((id) => this.goTo(id));
     this.api.onWorktreeStatus((id, status) => {
@@ -908,7 +914,7 @@ export class App {
     if (this.dialogOpen) return;
     this.dialogOpen = true;
     try {
-      await openSettingsDialog(this.settings, (settings) => this.applySettings(settings));
+      await openSettingsDialog(this.settings, (settings) => this.applySettings(settings), this.canUpdate);
     } finally {
       this.dialogOpen = false;
       if (this.focusedId) this.panes.get(this.focusedId)?.focus();
@@ -1089,7 +1095,13 @@ export class App {
     if (!(pane instanceof TerminalPane) || !pane.info.worktree || this.dialogOpen) return;
     this.dialogOpen = true;
     try {
-      await openDiffDialog(`${pane.name} · ⎇ ${pane.info.worktree.branch}`, () => this.api.worktreeDiff(id));
+      await openDiffDialog(`${pane.name} · ⎇ ${pane.info.worktree.branch}`, () => this.api.worktreeDiff(id), {
+        branch: pane.info.worktree.branch,
+        commit: (message) => this.api.worktreeCommit(id, message),
+        merge: () => this.api.worktreeMerge(id),
+        openPr: () => this.api.worktreeOpenPr(id),
+        openUrl: (url) => this.api.openExternal(url),
+      });
     } finally {
       this.dialogOpen = false;
     }

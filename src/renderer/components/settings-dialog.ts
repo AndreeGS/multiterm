@@ -29,7 +29,11 @@ const THEME_LABELS: Record<ThemeId, { name: string; hint: string }> = {
  * Configuracoes de aparencia. Cada mudanca e aplicada na hora via `onChange`
  * (que tambem persiste), entao nao ha "salvar": fechar mantem o que esta na tela.
  */
-export function openSettingsDialog(current: Settings, onChange: (settings: Settings) => void): Promise<void> {
+export function openSettingsDialog(
+  current: Settings,
+  onChange: (settings: Settings) => void,
+  canUpdate = false,
+): Promise<void> {
   return new Promise((resolve) => {
     let settings = current;
 
@@ -84,6 +88,14 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
         </label>
       </section>
       <section>
+        <div class="settings-label">Atualizacoes</div>
+        <label class="check-row">
+          <input type="checkbox" id="check-updates" />
+          Procurar versoes novas e baixar em segundo plano (instalar e sempre com voce)
+        </label>
+        <div class="settings-hint" id="updates-hint"></div>
+      </section>
+      <section>
         <label class="settings-label" for="editor">Editor ("Abrir no editor")</label>
         <input type="text" id="editor" spellcheck="false" placeholder="${DEFAULT_EDITOR}" />
         <div class="settings-hint">Programa e argumentos (ex.: <code>code</code>, <code>cursor</code>, <code>subl -n</code>); o diretorio do terminal vai no fim.</div>
@@ -115,6 +127,11 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
       if (editorArgv(value, '.')) update({ editorCommand: value });
     });
 
+    const updatesInput = modal.querySelector<HTMLInputElement>('#check-updates')!;
+    updatesInput.addEventListener('change', () => update({ checkUpdates: updatesInput.checked }));
+    modal.querySelector<HTMLElement>('#updates-hint')!.textContent = canUpdate
+      ? 'Pelas Releases do GitHub, a cada 6 horas. No .deb, instalar pede a senha de administrador.'
+      : 'So vale para o app instalado pelo .deb ou AppImage; aqui ele roda pelo codigo (atualize com git pull).';
     const familyInput = modal.querySelector<HTMLInputElement>('#font-family')!;
     familyInput.addEventListener('change', () => update({ fontFamily: cleanFontFamily(familyInput.value) }));
     const blinkInput = modal.querySelector<HTMLInputElement>('#cursor-blink')!;
@@ -169,6 +186,7 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
       showLinks.checked = settings.showLinks;
       for (const [style, btn] of cursorButtons) btn.classList.toggle('active', style === settings.cursorStyle);
       blinkInput.checked = settings.cursorBlink;
+      updatesInput.checked = settings.checkUpdates;
       if (document.activeElement !== familyInput) familyInput.value = settings.fontFamily === DEFAULT_FONT_FAMILY ? '' : settings.fontFamily;
       if (document.activeElement !== scrollbackInput) scrollbackInput.value = String(settings.scrollback);
       fontPreview.style.fontFamily = settings.fontFamily;

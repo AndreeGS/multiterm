@@ -50,6 +50,9 @@ const api: MultiTermApi = {
   removeWorktree: (worktree, force) => ipcRenderer.invoke(CHANNELS.worktreeRemove, worktree, force),
   requestWorktreeStatus: (id) => ipcRenderer.send(CHANNELS.worktreeStatusRequest, id),
   worktreeDiff: (id) => ipcRenderer.invoke(CHANNELS.worktreeDiff, id),
+  worktreeCommit: (id, message) => ipcRenderer.invoke(CHANNELS.worktreeCommit, id, message),
+  worktreeMerge: (id) => ipcRenderer.invoke(CHANNELS.worktreeMerge, id),
+  worktreeOpenPr: (id) => ipcRenderer.invoke(CHANNELS.worktreeOpenPr, id),
   openInEditor: (id) => ipcRenderer.invoke(CHANNELS.openInEditor, id),
   saveTemplate: (input) => ipcRenderer.invoke(CHANNELS.templateSave, input),
   deleteTemplate: (id) => ipcRenderer.invoke(CHANNELS.templateDelete, id),
@@ -90,6 +93,8 @@ const api: MultiTermApi = {
   onTerminalClose: (listener) => subscribe<[string]>(CHANNELS.closed, listener),
   onUsageUpdate: (listener) => subscribe<[UsageSummary]>(CHANNELS.usageUpdate, listener),
   onFocusTerminal: (listener) => subscribe<[string]>(CHANNELS.focusTerminal, listener),
+  onUpdateReady: (listener) => subscribe<[string]>(CHANNELS.updateReady, listener),
+  installUpdate: () => ipcRenderer.send(CHANNELS.installUpdate),
   onWorktreeStatus: (listener) => subscribe<[string, WorktreeStatus | null]>(CHANNELS.worktreeStatus, listener),
 };
 

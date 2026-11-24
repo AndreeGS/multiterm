@@ -85,6 +85,40 @@ export interface Git {
    * foi commitado, inclusive arquivos novos); sem base, so o nao commitado.
    */
   diff(path: string, base: string | null): Promise<WorktreeDiff>;
+  /** `git add -A` + `git commit -m` (com os hooks e a assinatura do usuario). */
+  commitAll(path: string, message: string): Promise<void>;
+  /**
+   * Mescla `branch` em `base` na copia principal (`repo`), que precisa estar
+   * na base e sem mudancas. Conflito = desfaz (`merge --abort`) e falha.
+   */
+  merge(repo: string, branch: string, base: string): Promise<MergeResult>;
+  /** Envia a branch ao `origin` (`push -u`). */
+  push(path: string, branch: string): Promise<void>;
+}
+
+/** Como o merge terminou: a base so avancou, ganhou um commit de merge, ou ja tinha tudo. */
+export type MergeResult = 'fast-forward' | 'merge' | 'up-to-date';
+
+/**
+ * Porta para abrir pull requests (o `gh` da maquina). Devolve a URL do PR.
+ */
+export interface PullRequests {
+  create(cwd: string, base: string, branch: string): Promise<string>;
+}
+
+/** Mensagem de commit: sem espacos nas pontas, nao vazia, de tamanho razoavel. */
+export function cleanCommitMessage(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw.replace(/\r\n?/g, '\n').trim();
+  if (!text || text.length > 5000 || /[\x00-\x08\x0b-\x1f\x7f]/.test(text)) return null;
+  return text;
+}
+
+/** Sugestao de mensagem a partir da branch: `feat/login-oauth` -> `feat: login oauth`. */
+export function suggestCommitMessage(branch: string): string {
+  const [head, ...rest] = branch.split('/');
+  const words = (rest.length > 0 ? rest.join(' ') : head!).replace(/[-_]+/g, ' ').trim();
+  return rest.length > 0 && /^[a-z]+$/.test(head!) ? `${head}: ${words}` : words;
 }
 
 /** Le a saida de `git status --porcelain=v2`. */

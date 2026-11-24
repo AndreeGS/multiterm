@@ -565,6 +565,7 @@ body.show-indexes .pane-header[data-index]::before {
 
 /* ---------- painel de agentes ---------- */
 .agents-btn.active { color: var(--accent); border-color: var(--border-active); }
+.update-btn { color: var(--running); border-color: var(--running); }
 .agents-panel {
   width: 300px;
   min-height: 0;
@@ -1323,6 +1324,13 @@ button.primary.danger:hover:not(:disabled) { background: var(--error); border-co
   gap: 10px;
 }
 .diff-head { display: flex; align-items: center; gap: 10px; }
+.diff-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.modal .diff-foot input.diff-commit-input { flex: 1 1 260px; min-width: 200px; }
+.diff-foot button.danger { color: var(--error); border-color: var(--error); }
+.diff-foot-status { flex: 1 1 100%; font-size: 12px; color: var(--fg-dim); min-height: 1.2em; overflow-wrap: anywhere; }
+.diff-foot-status.ok { color: var(--running); }
+.diff-foot-status.error { color: var(--error); white-space: pre-wrap; }
+.diff-foot-status a { color: var(--accent); }
 .diff-head h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .diff-summary { flex: 1; font-size: 12px; color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .diff-body {
