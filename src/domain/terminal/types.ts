@@ -1,6 +1,6 @@
 import type { WorktreeInfo } from '../git/worktree.js';
 import type { PaneColor } from '../workspace/colors.js';
-import type { AgentState } from './agent.js';
+import type { AgentState, PermissionAsk } from './agent.js';
 import type { CommandResult } from './shell-integration.js';
 
 /**
@@ -77,6 +77,8 @@ export interface TerminalSnapshot {
   readonly foreground: string | null;
   /** Ultimo comando terminado (marcas OSC 133 do shell); `null` = nenhum, ou um rodando agora. */
   readonly lastCommand: CommandResult | null;
+  /** Pedido de permissao do Claude que o app pode responder; `null` = nenhum. */
+  readonly pendingPermission: PermissionAsk | null;
 }
 
 /**

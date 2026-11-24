@@ -17,6 +17,8 @@ export interface Settings {
    * diretorio do terminal vai como ultimo argumento; sem shell.
    */
   editorCommand: string;
+  /** Painel lateral com todos os agentes aberto. */
+  agentsPanel: boolean;
 }
 
 export const FONT_SIZE_MIN = 9;
@@ -26,7 +28,7 @@ export const DEFAULT_EDITOR = 'code';
 const MAX_EDITOR_COMMAND = 200;
 
 export function defaultSettings(): Settings {
-  return { theme: 'dark', fontSize: 12, uiScale: 1, showLinks: true, editorCommand: DEFAULT_EDITOR };
+  return { theme: 'dark', fontSize: 12, uiScale: 1, showLinks: true, editorCommand: DEFAULT_EDITOR, agentsPanel: false };
 }
 
 export function isTheme(value: unknown): value is ThemeId {
@@ -46,6 +48,7 @@ export function parseSettings(raw: unknown): Settings {
     base.uiScale = input.uiScale;
   }
   if (typeof input.showLinks === 'boolean') base.showLinks = input.showLinks;
+  if (typeof input.agentsPanel === 'boolean') base.agentsPanel = input.agentsPanel;
   if (typeof input.editorCommand === 'string' && editorArgv(input.editorCommand, '.')) {
     base.editorCommand = input.editorCommand.trim();
   }

@@ -19,6 +19,7 @@ import { MIN_CONTRAST, SEARCH_DECORATIONS, TERMINAL_THEMES, type Appearance } fr
 import { openColorMenu, paneColorVar } from './color-menu.js';
 import { openContextMenu } from './context-menu.js';
 import { openConfirm } from './dialogs.js';
+import { permissionCard } from './permission-card.js';
 import { beginRename, button, DRAG_END_EVENT, el, isDragging, type Panel } from './panel.js';
 import { formatTokens, money } from './usage-bar.js';
 
@@ -97,6 +98,10 @@ export class TerminalPane implements Panel {
   private readonly searchBar: HTMLElement;
   private readonly searchInput: HTMLInputElement;
   private readonly searchCount: HTMLElement;
+  /** Onde o cartao de permissao aparece (sobre o terminal, no topo). */
+  private readonly askSlot: HTMLElement;
+  /** Pedido mostrado agora: o cartao so e refeito quando ele muda. */
+  private shownAsk: string | null = null;
   private readonly dot: HTMLElement;
   private readonly nameEl: HTMLElement;
   private readonly cwdEl: HTMLElement;
@@ -212,6 +217,8 @@ export class TerminalPane implements Panel {
     });
     // Flutua sobre o terminal: abrir a busca nao muda o tamanho do pty.
     body.append(this.searchBar);
+    this.askSlot = el('div', 'permission-slot');
+    body.append(this.askSlot);
     this.element.append(header, body);
     this.element.addEventListener('mousedown', () => this.callbacks.onFocus(this.id));
 
@@ -298,18 +305,26 @@ export class TerminalPane implements Panel {
     this.cwdEl.title = `${snapshot.cwd}  (${snapshot.shell})` +
       (snapshot.worktree ? `\nWorktree da branch ${snapshot.worktree.branch}, de ${snapshot.worktree.repo}` : '') +
       (snapshot.command ? `\nComando inicial: ${snapshot.command}` : '');
-    const agent = snapshot.agent;
-    this.dot.dataset.status = agent && snapshot.status !== 'exited' && snapshot.status !== 'error'
-      ? AGENT_DOT[agent.phase]
-      : snapshot.status;
+    this.dot.dataset.status = dotStatus(snapshot);
     this.element.classList.toggle('attention', snapshot.needsAttention);
     this.element.classList.toggle('notice', snapshot.notice !== null);
     this.element.classList.toggle('colored', snapshot.color !== null);
     if (snapshot.color) this.element.style.setProperty('--pane-accent', paneColorVar(snapshot.color));
     else this.element.style.removeProperty('--pane-accent');
-    this.dot.title = (agent ? AGENT_LABEL[agent.phase] : STATUS_LABEL[snapshot.status]) +
-      (snapshot.exitCode !== null ? ` (codigo ${snapshot.exitCode})` : '');
+    this.dot.title = stateLabel(snapshot);
     this.renderMeta();
+    this.renderAsk();
+  }
+
+  /** Cartao do pedido de permissao em aberto (ou nenhum). */
+  private renderAsk(): void {
+    const ask = this.snapshot.pendingPermission;
+    if ((ask?.id ?? null) === this.shownAsk) return;
+    this.shownAsk = ask?.id ?? null;
+    this.askSlot.replaceChildren(...(ask ? [permissionCard(ask, (answer) => {
+      this.api.answerPermission(this.id, ask.id, answer);
+      if (answer === 'release') this.focus();
+    })] : []));
   }
 
   /**
@@ -760,6 +775,18 @@ export class TerminalPane implements Panel {
     }
     return true;
   }
+}
+
+/** Cor do ponto de estado: o do agente, quando ha um acompanhado pelos hooks. */
+export function dotStatus(snapshot: TerminalSnapshot): TerminalSnapshot['status'] {
+  const { agent, status } = snapshot;
+  return agent && status !== 'exited' && status !== 'error' ? AGENT_DOT[agent.phase] : status;
+}
+
+/** `Claude aguardando voce`, `executando`, `finalizado (codigo 1)`... */
+export function stateLabel(snapshot: TerminalSnapshot): string {
+  const { agent, status, exitCode } = snapshot;
+  return (agent ? AGENT_LABEL[agent.phase] : STATUS_LABEL[status]) + (exitCode !== null ? ` (codigo ${exitCode})` : '');
 }
 
 /** `~/repo.worktrees/feat-x · ⎇ feat-x · claude`: onde roda, em que branch isolada, o que roda. */

@@ -30,6 +30,7 @@ import type { NotePatch } from '../domain/notes/note.js';
 import type { CanvasTextPatch } from '../domain/canvas/text.js';
 import type { CanvasFramePatch } from '../domain/canvas/frame.js';
 import type { TaskListPatch } from '../domain/tasks/task-list.js';
+import { isPermissionAnswer } from '../domain/terminal/agent.js';
 import { isClaudeCommand, withContinue } from '../domain/terminal/command.js';
 import { parseTerminalSize, parseTerminalSpec } from '../domain/terminal/spec.js';
 import type { TerminalSpec } from '../domain/terminal/types.js';
@@ -469,6 +470,11 @@ function registerIpc(): void {
     if (isSafeExternalUrl(url)) void shell.openExternal(url);
   });
   handle(CHANNELS.interrupt, (_event, id: string) => terminals.interrupt(id));
+  // Resposta pelo cartao do app; so vale se o pedido ainda esta aberto naquele terminal.
+  on(CHANNELS.answerPermission, (_event, id: unknown, askId: unknown, answer: unknown) => {
+    if (typeof id !== 'string' || typeof askId !== 'string' || !isPermissionAnswer(answer)) return;
+    if (terminals.answerPermission(id, askId, answer)) hooks?.answer(askId, answer);
+  });
   on(CHANNELS.setQueued, (_event, id: unknown, queued: unknown) => {
     if (typeof id === 'string') terminals.setQueued(id, queued === true);
   });
@@ -702,7 +708,10 @@ if (!app.requestSingleInstanceLock()) {
     tasks = new TasksService(new JsonTasksStore(app.getPath('userData')));
     attention = new AttentionNotifier(() => mainWindow, (id) => send(CHANNELS.focusTerminal, id));
     // Antes dos terminais: cada um nasce sabendo onde mandar os hooks do Claude.
-    hooks = startClaudeHooks(app.getPath('userData'), process.execPath, (token, event) => terminals.agentEvent(token, event));
+    hooks = startClaudeHooks(app.getPath('userData'), process.execPath, {
+      onEvent: (token, event) => terminals.agentEvent(token, event),
+      onAskGone: (askId) => terminals.permissionGone(askId),
+    });
     terminals = new TerminalService(new NodePtyFactory(), {
       onData: (id, chunk, seq) => output.push(id, chunk, seq),
       onUpdate: (snapshot) => {
@@ -725,6 +734,7 @@ if (!app.requestSingleInstanceLock()) {
         persistTerminals();
         send(CHANNELS.closed, id);
       },
+      onAskClosed: (askId) => hooks?.answer(askId, 'release'),
     }, (sessionId) => hasClaudeTranscript(sessionId), hooks?.config ?? null);
     foregroundTimer = setInterval(() => terminals.refreshForeground(), FOREGROUND_POLL_MS);
     foregroundTimer.unref();

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
-import type { AgentEvent } from '../../domain/terminal/agent.js';
+import type { AgentEvent, PermissionAnswer } from '../../domain/terminal/agent.js';
 import { cleanCommand, wantsOwnSession } from '../../domain/terminal/command.js';
 import type { PtyFactory } from '../../domain/terminal/pty.js';
 import type { PaneColor } from '../../domain/workspace/colors.js';
@@ -16,6 +16,8 @@ export interface TerminalServiceListeners {
   onUpdate(snapshot: TerminalSnapshot): void;
   /** Sessao removida do workspace. */
   onClose(id: string): void;
+  /** Um pedido de permissao saiu de cena sem resposta do app: soltar o hook. */
+  onAskClosed?(askId: string): void;
 }
 
 /**
@@ -58,6 +60,7 @@ export class TerminalService {
     const session = new TerminalSession(id, { ...spec, cwd, claudeSession }, this.ptys, {
       onData: (sid, chunk, seq) => this.listeners.onData(sid, chunk, seq),
       onUpdate: (snapshot) => this.listeners.onUpdate(snapshot),
+      onAskClosed: (askId) => this.listeners.onAskClosed?.(askId),
     }, this.hasTranscript, this.bindHooks(id));
     this.sessions.set(id, session);
     session.start(size);
@@ -65,9 +68,25 @@ export class TerminalService {
   }
 
   /** Evento de hook do Claude Code; o token diz de qual terminal. */
-  agentEvent(token: string, event: AgentEvent): void {
+  agentEvent(token: string, event: AgentEvent): boolean {
     const id = this.hookTokens.get(token);
-    if (id) this.sessions.get(id)?.agentEvent(event);
+    const session = id ? this.sessions.get(id) : undefined;
+    if (!session?.isAlive()) return false;
+    session.agentEvent(event);
+    return true;
+  }
+
+  /**
+   * Resposta do app a um pedido de permissao do terminal `id`. `true` = o
+   * pedido ainda estava aberto, e o hook deve receber a resposta.
+   */
+  answerPermission(id: string, askId: string, answer: PermissionAnswer): boolean {
+    return this.sessions.get(id)?.answerPermission(askId, answer) ?? false;
+  }
+
+  /** O hook desistiu de esperar o pedido `askId`. */
+  permissionGone(askId: string): void {
+    for (const session of this.sessions.values()) session.permissionGone(askId);
   }
 
   setQueued(id: string, queued: boolean): void {

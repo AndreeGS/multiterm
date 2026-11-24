@@ -1,9 +1,18 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
-import { hookSettings, parseAgentEvent, PERMISSION_NOTICE, shellQuote, type AgentEvent } from '../../domain/terminal/agent.js';
+import {
+  hookSettings,
+  parseAgentEvent,
+  PERMISSION_NOTICE,
+  permissionDecisionOutput,
+  shellQuote,
+  summarizeToolInput,
+  type AgentEvent,
+} from '../../domain/terminal/agent.js';
+import { sortForOverview } from '../../domain/terminal/overview.js';
 import { withHookSettings } from '../../domain/terminal/command.js';
 import type { Pty, PtyFactory, PtyOptions } from '../../domain/terminal/pty.js';
-import { agentPhaseAfterInput, buildEnv, TerminalSession } from '../../domain/terminal/session.js';
+import { agentPhaseAfterInput, buildEnv, isPassiveInput, TerminalSession } from '../../domain/terminal/session.js';
 import {
   formatDuration,
   formatWaiting,
@@ -55,7 +64,7 @@ describe('hooks no comando', () => {
 
   it('settings tem um hook por evento, com o comando dado', () => {
     const settings = hookSettings('run') as { hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>> };
-    assert.deepEqual(Object.keys(settings.hooks).sort(), ['Notification', 'SessionEnd', 'SessionStart', 'Stop', 'UserPromptSubmit']);
+    assert.deepEqual(Object.keys(settings.hooks).sort(), ['Notification', 'PermissionRequest', 'SessionEnd', 'SessionStart', 'Stop', 'UserPromptSubmit']);
     assert.equal(settings.hooks.Stop?.[0]?.hooks[0]?.command, 'run');
   });
 
@@ -66,12 +75,42 @@ describe('hooks no comando', () => {
 
   it('linha do socket: token e evento validos', () => {
     const got: Array<[string, AgentEvent]> = [];
-    const push = (token: string, event: AgentEvent) => got.push([token, event]);
-    handleLine(JSON.stringify({ token: 't', event: 'Stop' }), push);
-    handleLine('nao e json', push);
-    handleLine(JSON.stringify({ event: 'Stop' }), push);
-    handleLine(JSON.stringify({ token: 't', event: 'Outro' }), push);
+    const push = (token: string, event: AgentEvent) => got.push([token, event]) > 0;
+    const id = () => 'ask-1';
+    assert.equal(handleLine(JSON.stringify({ token: 't', event: 'Stop' }), push, id), null);
+    handleLine('nao e json', push, id);
+    handleLine(JSON.stringify({ event: 'Stop' }), push, id);
+    handleLine(JSON.stringify({ token: 't', event: 'Outro' }), push, id);
     assert.deepEqual(got.map(([token, event]) => [token, event.kind]), [['t', 'stop']]);
+  });
+
+  it('PermissionRequest vira pedido com id; sem terminal que aceite, nao fica esperando', () => {
+    const line = JSON.stringify({ token: 't', event: 'PermissionRequest', toolName: 'Bash', toolInput: { command: 'rm -rf build' } });
+    let event: AgentEvent | null = null;
+    assert.equal(handleLine(line, (_t, e) => ((event = e), true), () => 'ask-1'), 'ask-1');
+    assert.deepEqual(event, { kind: 'ask', sessionId: null, message: null, ask: { id: 'ask-1', tool: 'Bash', summary: 'rm -rf build' } });
+    assert.equal(handleLine(line, () => false, () => 'ask-2'), null);
+    // Sem ferramenta nao ha o que mostrar.
+    assert.equal(handleLine(JSON.stringify({ token: 't', event: 'PermissionRequest' }), () => true, () => 'x'), null);
+  });
+
+  it('resumo da ferramenta e saida da decisao', () => {
+    assert.equal(summarizeToolInput('Bash', { command: 'npm\ntest', description: 'x' }), 'npm test');
+    assert.equal(summarizeToolInput('Edit', { file_path: '/a/b.ts', old_string: 'x' }), '/a/b.ts');
+    assert.equal(summarizeToolInput('mcp__s__a', { n: 1 }), '{"n":1}');
+    assert.equal(summarizeToolInput('Tool', undefined), 'Tool');
+    assert.equal(summarizeToolInput('Bash', { command: 'x'.repeat(500) }).length, 300);
+    assert.deepEqual(JSON.parse(permissionDecisionOutput('allow')), { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } });
+    assert.equal(JSON.parse(permissionDecisionOutput('deny')).hookSpecificOutput.decision.behavior, 'deny');
+  });
+
+  it('entrada passiva (foco, mouse) nao conta como resposta', () => {
+    assert.ok(isPassiveInput('\x1b[I'));
+    assert.ok(isPassiveInput('\x1b[O\x1b[I'));
+    assert.ok(isPassiveInput('\x1b[<0;10;5M'));
+    assert.ok(!isPassiveInput('1'));
+    assert.ok(!isPassiveInput('\x1b'));
+    assert.ok(!isPassiveInput('\x1b[A'));
   });
 });
 
@@ -174,10 +213,12 @@ describe('TerminalSession com hooks', () => {
     ({ kind, sessionId: null, message: null, ...extra });
   const last = (): TerminalSnapshot => updates[updates.length - 1]!;
 
+  let released: string[];
   const session = (): TerminalSession => {
     const s = new TerminalSession('t1', { name: 'a', cwd: '/tmp', command: 'claude', claudeSession: SESSION }, factory, {
       onData: () => {},
       onUpdate: (snapshot) => updates.push(snapshot),
+      onAskClosed: (askId) => released.push(askId),
     }, () => false, { settingsArg: "'/d/h.json'", env: { MULTITERM_HOOK_TOKEN: 'tok', MULTITERM_HOOK_SOCKET: '/s' } });
     s.start();
     return s;
@@ -187,8 +228,55 @@ describe('TerminalSession com hooks', () => {
     mock.timers.enable({ apis: ['setTimeout', 'Date'] });
     factory = new FakeFactory();
     updates = [];
+    released = [];
   });
   afterEach(() => mock.timers.reset());
+
+  const ask = (id: string): AgentEvent => event('ask', { ask: { id, tool: 'Bash', summary: 'npm test' } });
+
+  it('pedido de permissao pelo hook: cartao, aviso e resposta pelo app', () => {
+    const s = session();
+    s.agentEvent(event('prompt'));
+    s.agentEvent(ask('k1'));
+    assert.deepEqual(last().pendingPermission, { id: 'k1', tool: 'Bash', summary: 'npm test' });
+    assert.equal(last().notice, 'quer usar Bash: npm test');
+    assert.equal(last().agent?.phase, 'permission');
+    // A notificacao do Claude (6s depois) nao troca o texto do pedido.
+    s.agentEvent(event('permission', { message: 'Claude needs your permission' }));
+    assert.equal(last().notice, 'quer usar Bash: npm test');
+    assert.equal(s.answerPermission('outro', 'allow'), false);
+    assert.equal(s.answerPermission('k1', 'allow'), true);
+    assert.equal(last().pendingPermission, null);
+    assert.equal(last().notice, null);
+    assert.equal(last().agent?.phase, 'working');
+    assert.equal(s.answerPermission('k1', 'deny'), false);
+    assert.deepEqual(released, []);
+  });
+
+  it('responder no terminal solta o hook; foco do xterm nao', () => {
+    const s = session();
+    s.agentEvent(ask('k1'));
+    s.write('\x1b[I');
+    assert.equal(last().pendingPermission?.id, 'k1');
+    s.write('\r');
+    assert.equal(last().pendingPermission, null);
+    assert.deepEqual(released, ['k1']);
+  });
+
+  it('pedido novo, fim da volta ou hook que desiste tiram o cartao', () => {
+    const s = session();
+    s.agentEvent(ask('k1'));
+    s.agentEvent(ask('k2'));
+    assert.deepEqual(released, ['k1']);
+    s.agentEvent(event('stop'));
+    assert.deepEqual(released, ['k1', 'k2']);
+    s.agentEvent(ask('k3'));
+    s.permissionGone('k3');
+    assert.equal(last().pendingPermission, null);
+    // Desistiu sozinho: nao ha a quem soltar; o aviso fica (o dialogo do terminal segue).
+    assert.deepEqual(released, ['k1', 'k2']);
+    assert.equal(last().notice, 'quer usar Bash: npm test');
+  });
 
   it('o claude abre com os hooks, e o pty recebe o token', () => {
     session();
@@ -284,5 +372,28 @@ describe('TerminalSession com hooks', () => {
     assert.deepEqual(last().lastCommand, { exitCode: 2, durationMs: 4000, endedAt: Date.now() });
     pty.emit('\x1b]133;C\x07');
     assert.equal(last().lastCommand, null);
+  });
+});
+
+describe('painel de agentes', () => {
+  const snap = (id: string, extra: Partial<TerminalSnapshot>): { info: TerminalSnapshot } => ({
+    info: {
+      id, name: id, cwd: '/', shell: 'bash', command: null, color: null, claudeSession: null, worktree: null,
+      workspaceId: 'w', status: 'idle', exitCode: null, createdAt: 0, needsAttention: false, notice: null,
+      attentionSince: null, agent: null, foreground: null, lastCommand: null, pendingPermission: null, ...extra,
+    },
+  });
+
+  it('pedido > aguardando (mais antigo primeiro) > trabalhando > agente > terminal', () => {
+    const items = [
+      snap('shell', { createdAt: 1 }),
+      snap('trabalhando', { agent: { phase: 'working', turns: 0 }, createdAt: 2 }),
+      snap('esperando-novo', { needsAttention: true, attentionSince: 200, createdAt: 3 }),
+      snap('pedido', { pendingPermission: { id: 'k', tool: 'Bash', summary: 'x' }, needsAttention: true, attentionSince: 300, createdAt: 4 }),
+      snap('esperando-antigo', { needsAttention: true, attentionSince: 100, createdAt: 5 }),
+      snap('agente', { agent: { phase: 'waiting', turns: 1 }, createdAt: 6 }),
+    ];
+    assert.deepEqual(sortForOverview(items).map((item) => item.info.id),
+      ['pedido', 'esperando-antigo', 'esperando-novo', 'trabalhando', 'agente', 'shell']);
   });
 });

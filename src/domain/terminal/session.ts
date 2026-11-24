@@ -2,7 +2,7 @@ import { basename } from 'node:path';
 import { parseWorktreeInfo, type WorktreeInfo } from '../git/worktree.js';
 import { parsePaneColor, type PaneColor } from '../workspace/colors.js';
 import { parseWorkspaceId } from '../workspace/workspace.js';
-import { PERMISSION_NOTICE, type AgentEvent, type AgentState } from './agent.js';
+import { PERMISSION_NOTICE, type AgentEvent, type AgentState, type PermissionAnswer, type PermissionAsk } from './agent.js';
 import { claudeLaunchCommand, cleanCommand, parseSessionId, sessionIdOf, wantsOwnSession, withHookSettings } from './command.js';
 import type { Pty, PtyFactory } from './pty.js';
 import { SignalScanner } from './signals.js';
@@ -14,6 +14,12 @@ export interface SessionEvents {
   /** `seq` cresce a cada chunk, inclusive entre restarts. */
   onData(id: string, chunk: string, seq: number): void;
   onUpdate(snapshot: TerminalSnapshot): void;
+  /**
+   * Um pedido de permissao saiu de cena sem o app responder (voce respondeu no
+   * terminal, o agente seguiu, o terminal reiniciou): o hook que espera deve
+   * ser solto.
+   */
+  onAskClosed?(askId: string): void;
 }
 
 /** Porta: a conversa do Claude com este id ja foi gravada em disco? */
@@ -75,6 +81,8 @@ export class TerminalSession {
   private commandPending = false;
   private attentionSince: number | null = null;
   private agent: AgentState | null = null;
+  /** Pedido de permissao esperando resposta (o hook esta parado esperando). */
+  private ask: PermissionAsk | null = null;
   /**
    * Ha um proximo prompt esperando este agente terminar a volta (fila de
    * tarefas): o Stop nao vira pedido de atencao, a fila responde por voce.
@@ -130,6 +138,7 @@ export class TerminalSession {
       agent: this.agent,
       foreground: this.foreground,
       lastCommand: this.lastCommand,
+      pendingPermission: this.ask,
     };
   }
 
@@ -148,6 +157,7 @@ export class TerminalSession {
 
     this.exitCode = null;
     this.scanner = new SignalScanner();
+    this.dropAsk();
     this.agent = null;
     this.queued = false;
     this.foreground = null;
@@ -206,6 +216,7 @@ export class TerminalSession {
         return;
       }
       this.exitCode = code;
+      this.dropAsk();
       this.agent = null;
       this.foreground = null;
       this.setStatus(code === 0 ? 'exited' : 'error');
@@ -213,6 +224,11 @@ export class TerminalSession {
   }
 
   write(data: string): void {
+    // Foco e mouse nao sao resposta: clicar no terminal nao atende o pedido.
+    if (isPassiveInput(data)) {
+      this.pty?.write(data);
+      return;
+    }
     // Pedir atencao so faz sentido depois que voce iniciou alguma coisa aqui.
     // Sem isto, o prompt do shell de um terminal recem-criado ja dispararia o
     // aviso, e varias abas novas apareceriam como "aguardando" sem motivo.
@@ -220,8 +236,10 @@ export class TerminalSession {
     // Alguem (voce, ou a fila) ja respondeu ao agente parado.
     this.stopSilenced = false;
     const phase = this.agent && agentPhaseAfterInput(this.agent.phase, data);
-    const changed = phase !== null && phase !== this.agent?.phase;
-    if (changed) this.agent = { ...this.agent!, phase };
+    const changed = (phase !== null && phase !== this.agent?.phase) || this.ask !== null;
+    if (phase !== null) this.agent = { ...this.agent!, phase };
+    // Respondeu no dialogo do terminal: o cartao do app sai.
+    this.dropAsk();
     // Digitar e responder: o pedido explicito ja foi atendido.
     if (this.notice !== null || changed) {
       this.notice = null;
@@ -274,6 +292,7 @@ export class TerminalSession {
         this.agent = agent;
         break;
       case 'prompt':
+        this.dropAsk();
         this.agent = { ...agent, phase: 'working' };
         this.stopSilenced = false;
         this.armed = true;
@@ -281,6 +300,7 @@ export class TerminalSession {
         this.notice = null;
         break;
       case 'stop':
+        this.dropAsk();
         this.agent = { phase: 'waiting', turns: agent.turns + 1 };
         this.attention = !this.queued;
         this.stopSilenced = this.queued;
@@ -289,13 +309,48 @@ export class TerminalSession {
         break;
       case 'permission':
         this.agent = { ...agent, phase: 'permission' };
-        this.notice = event.message ?? PERMISSION_NOTICE;
+        // Com o pedido do hook aberto, o texto dele (ferramenta e comando) diz mais.
+        if (!this.ask) this.notice = event.message ?? PERMISSION_NOTICE;
+        break;
+      case 'ask':
+        if (!event.ask) return;
+        this.dropAsk();
+        this.ask = event.ask;
+        this.agent = { ...agent, phase: 'permission' };
+        this.notice = `quer usar ${event.ask.tool}: ${event.ask.summary}`.slice(0, 200);
         break;
       case 'end':
+        this.dropAsk();
         this.agent = null;
         break;
     }
     this.emitUpdate();
+  }
+
+  /**
+   * Voce respondeu o pedido pelo app. `false` = o pedido ja nao existe (foi
+   * respondido no terminal, ou expirou): quem chamou nao deve responder ao hook.
+   */
+  answerPermission(askId: string, answer: PermissionAnswer): boolean {
+    if (!this.ask || this.ask.id !== askId) return false;
+    this.ask = null;
+    if (answer !== 'release') {
+      this.notice = null;
+      if (this.agent) this.agent = { ...this.agent, phase: 'working' };
+    }
+    this.emitUpdate();
+    return true;
+  }
+
+  /** O hook que esperava desistiu (expirou ou morreu): o pedido segue so no terminal. */
+  permissionGone(askId: string): void {
+    if (this.ask?.id !== askId) return;
+    this.ask = null;
+    this.emitUpdate();
+  }
+
+  get pendingAskId(): string | null {
+    return this.ask?.id ?? null;
   }
 
   /** A fila de tarefas tem (ou deixou de ter) um proximo prompt para este agente. */
@@ -319,7 +374,10 @@ export class TerminalSession {
     const agentGone = this.agent !== null && program === null;
     if (program === this.foreground && !agentGone) return;
     this.foreground = program;
-    if (agentGone) this.agent = null;
+    if (agentGone) {
+      this.dropAsk();
+      this.agent = null;
+    }
     this.emitUpdate();
   }
 
@@ -360,6 +418,7 @@ export class TerminalSession {
 
   /** Encerra definitivamente. Nao emite update: a sessao sai do workspace. */
   dispose(): void {
+    this.dropAsk();
     this.disposed = true;
     this.pendingRestart = false;
     this.clearIdleTimer();
@@ -396,6 +455,14 @@ export class TerminalSession {
       this.commandStartedAt = null;
       this.emitUpdate();
     }
+  }
+
+  /** Tira o pedido de cena e solta o hook que o esperava. */
+  private dropAsk(): void {
+    const ask = this.ask;
+    if (!ask) return;
+    this.ask = null;
+    this.events.onAskClosed?.(ask.id);
   }
 
   private needsAttention(): boolean {
@@ -511,6 +578,15 @@ export function agentPhaseAfterInput(phase: AgentState['phase'], data: string): 
   if (phase === 'permission') return interrupt ? 'waiting' : 'working';
   if (phase === 'working' && interrupt) return 'waiting';
   return null;
+}
+
+/**
+ * Entrada que o xterm gera sozinho quando o programa pede: aviso de foco
+ * (`ESC [ I` / `ESC [ O`) e relatos de mouse (SGR `ESC [ < ... M|m` e o
+ * classico `ESC [ M` + 3 bytes).
+ */
+export function isPassiveInput(data: string): boolean {
+  return /^(\x1b\[[IO]|\x1b\[<\d+;\d+;\d+[Mm]|\x1b\[M[\s\S]{3})+$/.test(data);
 }
 
 function errorMessage(error: unknown): string {
