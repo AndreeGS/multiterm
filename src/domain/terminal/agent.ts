@@ -156,6 +156,11 @@ export function hookSettings(command: string): object {
   };
 }
 
+/** Caminho pronto para o shell: como esta se for seguro, senao entre aspas simples. */
+export function quotePath(path: string): string {
+  return /^[\w@%+=:,./-]+$/.test(path) ? path : shellQuote(path);
+}
+
 /** Aspas simples de shell POSIX. */
 export function shellQuote(text: string): string {
   return `'${text.replace(/'/g, `'\\''`)}'`;

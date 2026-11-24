@@ -107,7 +107,8 @@ npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copiar / colar (o `Ctrl+C` puro continua sendo SIGINT) |
 | `Ctrl+Shift+F` (num terminal) | Buscar no scrollback (`Enter` / `Shift+Enter` navegam, `Esc` fecha) |
 | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` (num terminal) | Prompt anterior / seguinte no scrollback (shell com marcas OSC 133, ver abaixo) |
-| Botao direito (num terminal) | Menu: copiar, colar, buscar, limpar, renomear, cor, reiniciar, diff do worktree, abrir no editor, fechar |
+| Botao direito (num terminal) | Menu: copiar, colar, buscar, limpar, renomear, cor, reiniciar, diff do worktree, abrir no editor, duplicar, fechar |
+| Arrastar arquivos para um terminal | Cola os caminhos (com aspas quando precisam), sem Enter |
 | `F1` | Lista de atalhos |
 | Duplo clique no nome | Renomear |
 
@@ -257,6 +258,10 @@ aplicado na hora e fica salvo no `config.json`:
   (`minimumContrastRatio`), para nada sumir no fundo claro;
 - **Fonte dos terminais e notas**: de 9 a 24px. Na area livre o zoom continua
   multiplicando por cima;
+- **Fonte dos terminais**: as familias (lista CSS, ex.: `"Iosevka", monospace`);
+  vazio volta ao padrao;
+- **Cursor dos terminais**: bloco, barra ou sublinhado, piscando ou nao;
+- **Historico de cada terminal**: de 1.000 a 100.000 linhas (padrao 10.000);
 - **Tamanho da interface**: 90% a 140% para barra, cabecalhos e dialogos;
 - **Editor**: o programa do "Abrir no editor" (padrao `code`; ex.: `cursor`,
   `subl -n`). As palavras sao separadas por espaco e o diretorio vai no fim,
@@ -341,8 +346,23 @@ Uma moldura com titulo que junta paineis e textos de um mesmo assunto ("API",
 Ao abrir o app, se havia terminais na sessao anterior, aparece o botao
 **⟲ Restaurar sessao (N)** na barra: ele reabre cada terminal com o mesmo nome,
 diretorio, shell e posicao — mas com um shell novo, os processos nao
-sobrevivem ao fechamento. O ✕ ao lado descarta a sessao. Enquanto voce nao
+sobrevivem ao fechamento. O **historico** de cada um volta junto, com as cores,
+e uma linha `── sessao anterior, restaurada em ... ──` separa o que era do shell
+novo. O ✕ ao lado descarta a sessao (e os historicos). Enquanto voce nao
 escolher, ela continua guardada.
+
+### Diretorio atual e Duplicar
+
+O terminal acompanha o `cd`: o shell avisa o diretorio a cada prompt (OSC 7;
+no bash o MultiTerm liga isso sozinho, junto com as marcas de prompt), e o
+cabecalho, o `⟳` e a sessao restaurada passam a usar o diretorio em que voce
+esta, nao o de quando o terminal abriu. Caminhos de outra maquina (dentro de um
+`ssh`) sao ignorados. Um terminal com `claude` fica no diretorio em que abriu:
+a conversa e daquele projeto.
+
+**Duplicar terminal** (menu do botao direito ou paleta) abre outro igual — nome
+com `(copia)`, comando inicial, cor e shell — no diretorio atual dele. Um
+`claude` ganha conversa nova; um terminal de worktree abre no mesmo worktree.
 
 ## Bloco de notas
 
@@ -616,7 +636,11 @@ todos com escrita atomica, sem banco de dados:
 
 Notas, listas, textos e grupos guardam o workspace a que pertencem.
 
-O historico (scrollback) e os processos dos terminais nao sao persistidos.
+Os processos dos terminais nao sobrevivem ao fechamento. O historico de cada
+terminal (ate 5.000 linhas, no maximo 2 MB) fica em `scrollback/<id>.txt`, so
+legivel pelo seu usuario: gravado a cada minuto para quem teve output e ao
+fechar a janela, apagado ao fechar o terminal ou descartar a sessao. Tudo o
+que passou pelo terminal vai para esse arquivo.
 
 ## Dialogos
 

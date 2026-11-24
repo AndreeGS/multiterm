@@ -38,11 +38,14 @@ export interface CommandResult {
 }
 
 /**
- * `PROMPT_COMMAND` emite o fim do comando anterior (com o `$?`) e o inicio do
- * prompt, e devolve o `$?` para quem vier depois (PS1 que mostra o codigo).
+ * `PROMPT_COMMAND` emite o fim do comando anterior (com o `$?`), o diretorio
+ * atual (OSC 7) e o inicio do prompt, e devolve o `$?` para quem vier depois
+ * (PS1 que mostra o codigo).
  * `PS0` sai depois do Enter, antes do comando rodar.
  */
-const BASH_PROMPT_COMMAND = '__mt_s=$?;printf "\\e]133;D;%s\\a\\e]133;A\\a" "$__mt_s";(exit $__mt_s)';
+const BASH_PROMPT_COMMAND =
+  '__mt_s=$?;__mt_p=${PWD//%/%25};' +
+  'printf "\\e]133;D;%s\\a\\e]7;file://%s%s\\a\\e]133;A\\a" "$__mt_s" "$HOSTNAME" "${__mt_p// /%20}";(exit $__mt_s)';
 const BASH_PS0 = '\\e]133;C\\a';
 
 /** Variaveis de ambiente que ligam as marcas no bash; `{}` para outros shells. */
@@ -73,4 +76,24 @@ export function formatWaiting(ms: number): string | null {
   if (minutes < 1) return null;
   if (minutes < 60) return `ha ${minutes} min`;
   return `ha ${Math.floor(minutes / 60)} h`;
+}
+
+/**
+ * Diretorio de um OSC 7 (`file://host/caminho`, com `%XX`). So vale se o host
+ * for esta maquina (ou vazio/localhost): dentro de um `ssh`, o shell remoto
+ * manda caminhos que aqui nao existem. `null` = ignorar.
+ */
+export function parseOsc7(body: string, hostname: string): string | null {
+  const match = /^file:\/\/([^/]*)(\/.*)$/.exec(body);
+  if (!match) return null;
+  const host = match[1]!.toLowerCase();
+  const local = hostname.toLowerCase();
+  if (host && host !== 'localhost' && host !== local && host !== local.split('.')[0]) return null;
+  let path: string;
+  try {
+    path = decodeURIComponent(match[2]!);
+  } catch {
+    return null;
+  }
+  return path.startsWith('/') && !/[\x00-\x1f]/.test(path) ? path : null;
 }

@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 import type { TerminalSnapshot, TerminalSpec } from '../domain/terminal/types.js';
 import type { UsageSummary } from '../domain/usage/types.js';
 import type { NotePatch } from '../domain/notes/note.js';
@@ -37,6 +37,9 @@ const api: MultiTermApi = {
   replayTerminal: (id) => ipcRenderer.invoke(CHANNELS.replay, id),
 
   acknowledgeTerminal: (id) => ipcRenderer.send(CHANNELS.acknowledge, id),
+  pathForFile: (file) => webUtils.getPathForFile(file),
+  saveScrollback: (id, text) => ipcRenderer.send(CHANNELS.saveScrollback, id, text),
+  takeScrollback: (id) => ipcRenderer.invoke(CHANNELS.takeScrollback, id),
   setTerminalQueued: (id, queued) => ipcRenderer.send(CHANNELS.setQueued, id, queued),
   answerPermission: (id, askId, answer) => ipcRenderer.send(CHANNELS.answerPermission, id, askId, answer),
   writeTerminal: (id, data) => ipcRenderer.send(CHANNELS.write, id, data),

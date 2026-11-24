@@ -1,4 +1,5 @@
-import { parseShellMark, type ShellMark } from './shell-integration.js';
+import { hostname } from 'node:os';
+import { parseOsc7, parseShellMark, type ShellMark } from './shell-integration.js';
 
 /**
  * Detecta pedidos explicitos de atencao no fluxo de bytes do pty:
@@ -19,6 +20,17 @@ export class SignalScanner {
   private osc = '';
   /** Marcas de prompt (OSC 133) achadas desde o ultimo `takeMarks()`, em ordem. */
   private marks: ShellMark[] = [];
+  /** Ultimo diretorio informado pelo shell (OSC 7) ainda nao lido. */
+  private cwd: string | null = null;
+
+  constructor(private readonly host: string = hostname()) {}
+
+  /** Devolve e esquece o ultimo diretorio informado pelo shell. */
+  takeCwd(): string | null {
+    const cwd = this.cwd;
+    this.cwd = null;
+    return cwd;
+  }
 
   /** Devolve e esquece as marcas de prompt vistas nos ultimos `scan()`. */
   takeMarks(): ShellMark[] {
@@ -69,6 +81,10 @@ export class SignalScanner {
     this.state = 'text';
     const osc = this.osc;
     this.osc = '';
+    if (osc.startsWith('7;')) {
+      this.cwd = parseOsc7(osc.slice(2), this.host) ?? this.cwd;
+      return null;
+    }
     if (osc.startsWith('133;')) {
       const mark = parseShellMark(osc.slice(4));
       if (mark) this.marks.push(mark);

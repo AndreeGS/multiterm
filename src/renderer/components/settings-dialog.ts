@@ -1,7 +1,13 @@
 import { trapFocus } from './modal.js';
 
 import {
+  CURSOR_STYLES,
   DEFAULT_EDITOR,
+  DEFAULT_FONT_FAMILY,
+  SCROLLBACK_MAX,
+  SCROLLBACK_MIN,
+  cleanFontFamily,
+  type CursorStyle,
   defaultSettings,
   editorArgv,
   FONT_SIZE_MAX,
@@ -11,6 +17,8 @@ import {
   type Settings,
   type ThemeId,
 } from '../../domain/workspace/settings.js';
+
+const CURSOR_LABELS: Record<CursorStyle, string> = { block: '█ Bloco', bar: '▏ Barra', underline: '▁ Sublinhado' };
 
 const THEME_LABELS: Record<ThemeId, { name: string; hint: string }> = {
   dark: { name: 'Escuro', hint: 'O tema original' },
@@ -45,6 +53,24 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
           <span class="font-value" id="font-value"></span>
         </div>
         <div class="font-preview" id="font-preview">$ claude --continue   # Ola, mundo</div>
+      </section>
+      <section>
+        <label class="settings-label" for="font-family">Fonte dos terminais</label>
+        <input type="text" id="font-family" spellcheck="false" placeholder="${DEFAULT_FONT_FAMILY.replace(/"/g, '&quot;')}" />
+        <div class="settings-hint">Familias separadas por virgula, a primeira instalada vale; vazio volta ao padrao.</div>
+      </section>
+      <section>
+        <div class="settings-label">Cursor dos terminais</div>
+        <div class="segmented" id="cursors"></div>
+        <label class="check-row">
+          <input type="checkbox" id="cursor-blink" />
+          Piscando
+        </label>
+      </section>
+      <section>
+        <label class="settings-label" for="scrollback">Historico de cada terminal (linhas)</label>
+        <input type="number" id="scrollback" min="${SCROLLBACK_MIN}" max="${SCROLLBACK_MAX}" step="1000" />
+        <div class="settings-hint">Mais linhas, mais memoria por terminal. O historico salvo para restaurar a sessao guarda ate 5000.</div>
       </section>
       <section>
         <div class="settings-label">Tamanho da interface</div>
@@ -89,6 +115,26 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
       if (editorArgv(value, '.')) update({ editorCommand: value });
     });
 
+    const familyInput = modal.querySelector<HTMLInputElement>('#font-family')!;
+    familyInput.addEventListener('change', () => update({ fontFamily: cleanFontFamily(familyInput.value) }));
+    const blinkInput = modal.querySelector<HTMLInputElement>('#cursor-blink')!;
+    blinkInput.addEventListener('change', () => update({ cursorBlink: blinkInput.checked }));
+    const scrollbackInput = modal.querySelector<HTMLInputElement>('#scrollback')!;
+    scrollbackInput.addEventListener('change', () => {
+      const value = Number(scrollbackInput.value);
+      if (Number.isFinite(value)) update({ scrollback: Math.round(Math.min(SCROLLBACK_MAX, Math.max(SCROLLBACK_MIN, value))) });
+    });
+    const cursorButtons = new Map<CursorStyle, HTMLButtonElement>();
+    const cursorsBox = modal.querySelector<HTMLElement>('#cursors')!;
+    for (const style of CURSOR_STYLES) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = CURSOR_LABELS[style];
+      btn.addEventListener('click', () => update({ cursorStyle: style }));
+      cursorButtons.set(style, btn);
+      cursorsBox.appendChild(btn);
+    }
+
     const themeButtons = new Map<ThemeId, HTMLButtonElement>();
     for (const theme of THEMES) {
       const btn = document.createElement('button');
@@ -121,6 +167,11 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
       fontValue.textContent = `${settings.fontSize}px`;
       fontPreview.style.fontSize = `${settings.fontSize}px`;
       showLinks.checked = settings.showLinks;
+      for (const [style, btn] of cursorButtons) btn.classList.toggle('active', style === settings.cursorStyle);
+      blinkInput.checked = settings.cursorBlink;
+      if (document.activeElement !== familyInput) familyInput.value = settings.fontFamily === DEFAULT_FONT_FAMILY ? '' : settings.fontFamily;
+      if (document.activeElement !== scrollbackInput) scrollbackInput.value = String(settings.scrollback);
+      fontPreview.style.fontFamily = settings.fontFamily;
       if (document.activeElement !== editorInput) {
         editorInput.value = settings.editorCommand;
         editorInput.classList.remove('invalid');
@@ -139,7 +190,8 @@ export function openSettingsDialog(current: Settings, onChange: (settings: Setti
     fontInput.addEventListener('input', () => update({ fontSize: Number(fontInput.value) }));
     modal.querySelector('#font-dec')!.addEventListener('click', () => update({ fontSize: settings.fontSize - 1 }));
     modal.querySelector('#font-inc')!.addEventListener('click', () => update({ fontSize: settings.fontSize + 1 }));
-    modal.querySelector('#reset')!.addEventListener('click', () => update(defaultSettings()));
+    // O painel de agentes aberto e escolha de layout, nao de aparencia: fica.
+    modal.querySelector('#reset')!.addEventListener('click', () => update({ ...defaultSettings(), agentsPanel: settings.agentsPanel }));
 
     const close = () => {
       overlay.remove();

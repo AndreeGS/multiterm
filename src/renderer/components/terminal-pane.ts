@@ -1,12 +1,13 @@
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
+import { SerializeAddon } from '@xterm/addon-serialize';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal, type IMarker } from '@xterm/xterm';
 import { describeStatus, formatStatus, type WorktreeStatus } from '../../domain/git/worktree.js';
-import type { AgentPhase } from '../../domain/terminal/agent.js';
+import { quotePath, type AgentPhase } from '../../domain/terminal/agent.js';
 import { formatDuration, formatWaiting } from '../../domain/terminal/shell-integration.js';
 import type { TerminalSnapshot } from '../../domain/terminal/types.js';
 import { totalTokens, type UsageTotals } from '../../domain/usage/types.js';
@@ -47,6 +48,8 @@ const AGENT_DOT: Record<AgentPhase, TerminalSnapshot['status']> = {
 
 /** Comandos mais curtos que isto nao ganham o selo de resultado: voce estava olhando. */
 const COMMAND_BADGE_MIN_MS = 3000;
+/** Linhas do historico salvas para restaurar a sessao (o arquivo tem limite de tamanho). */
+const SAVED_HISTORY_LINES = 5000;
 /** Marcas de prompt guardadas por terminal (as mais antigas saem com o scrollback). */
 const MAX_PROMPT_MARKS = 2000;
 /**
@@ -78,6 +81,8 @@ export interface PaneCallbacks {
   onShowDiff(id: string): void;
   /** Abre o diretorio do terminal no editor das configuracoes. */
   onOpenEditor(id: string): void;
+  /** Abre outro terminal igual a este, no diretorio em que ele esta. */
+  onDuplicate(id: string): void;
 }
 
 /** Focar o terminal pede o status do worktree, mas no maximo uma vez neste intervalo. */
@@ -95,6 +100,9 @@ export class TerminalPane implements Panel {
   private readonly term: Terminal;
   private readonly fit = new FitAddon();
   private readonly search = new SearchAddon();
+  private readonly serializer = new SerializeAddon();
+  /** Chegou output desde o ultimo historico salvo. */
+  private historyDirty = false;
   private readonly searchBar: HTMLElement;
   private readonly searchInput: HTMLInputElement;
   private readonly searchCount: HTMLElement;
@@ -223,11 +231,12 @@ export class TerminalPane implements Panel {
     this.element.addEventListener('mousedown', () => this.callbacks.onFocus(this.id));
 
     this.term = new Terminal({
-      fontFamily: 'ui-monospace, "JetBrains Mono", "Fira Code", Menlo, monospace',
+      fontFamily: appearance.fontFamily,
       fontSize: appearance.fontSize,
       lineHeight: 1.2,
-      cursorBlink: true,
-      scrollback: 10_000,
+      cursorBlink: appearance.cursorBlink,
+      cursorStyle: appearance.cursorStyle,
+      scrollback: appearance.scrollback,
       // A largura Unicode 11 (abaixo) e API proposta do xterm.
       allowProposedApi: true,
       theme: TERMINAL_THEMES[appearance.theme],
@@ -240,6 +249,7 @@ export class TerminalPane implements Panel {
     // URLs soltas no texto: o handler padrao tambem abriria uma janela vazia.
     this.term.loadAddon(new WebLinksAddon((_event, uri) => this.api.openExternal(uri)));
     this.term.loadAddon(this.search);
+    this.term.loadAddon(this.serializer);
     this.search.onDidChangeResults(({ resultIndex, resultCount }) => {
       this.searchCount.textContent = resultCount === 0 ? 'nada' : `${resultIndex + 1}/${resultCount}`;
     });
@@ -266,6 +276,26 @@ export class TerminalPane implements Panel {
       if (last) this.setVisible(last.isIntersecting);
     });
     this.visibility.observe(this.element);
+    // Arrastar arquivos (do gerenciador de arquivos, do editor) cola os
+    // caminhos, com aspas quando precisam, sem Enter.
+    body.addEventListener('dragover', (event) => {
+      if (!event.dataTransfer?.types.includes('Files')) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      this.element.classList.add('drop-target');
+    });
+    body.addEventListener('dragleave', () => this.element.classList.remove('drop-target'));
+    body.addEventListener('drop', (event) => {
+      this.element.classList.remove('drop-target');
+      const files = [...(event.dataTransfer?.files ?? [])];
+      if (files.length === 0) return;
+      event.preventDefault();
+      const paths = files.map((file) => this.api.pathForFile(file)).filter(Boolean);
+      if (paths.length === 0) return;
+      this.term.paste(`${paths.map(quotePath).join(' ')} `);
+      this.callbacks.onFocus(this.id);
+      this.term.focus();
+    });
     body.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       this.callbacks.onFocus(this.id);
@@ -442,8 +472,15 @@ export class TerminalPane implements Panel {
     this.theme = appearance.theme;
     this.term.options.theme = TERMINAL_THEMES[appearance.theme];
     this.term.options.minimumContrastRatio = MIN_CONTRAST[appearance.theme];
+    this.term.options.cursorStyle = appearance.cursorStyle;
+    this.term.options.cursorBlink = appearance.cursorBlink;
+    this.term.options.scrollback = appearance.scrollback;
+    const fontChanged = this.term.options.fontFamily !== appearance.fontFamily;
+    if (fontChanged) this.term.options.fontFamily = appearance.fontFamily;
     this.fontSize = appearance.fontSize;
     this.applyFontSize();
+    // Outra fonte, outra largura de celula: cols/rows mudam.
+    if (fontChanged) this.refit();
     // Busca aberta: repinta as ocorrencias com as cores do tema novo.
     if (themeChanged && !this.searchBar.hidden && this.searchInput.value) this.findNext(false, true);
   }
@@ -627,7 +664,23 @@ export class TerminalPane implements Panel {
       return;
     }
     this.lastSeq = seq;
+    this.historyDirty = true;
     this.term.write(data, () => this.ack(data.length));
+  }
+
+  /**
+   * Historico com cores para salvar, ou `null` se nada mudou desde a ultima
+   * vez (`force` = mesmo assim, ao fechar a janela).
+   */
+  takeHistory(force = false): string | null {
+    if (!this.historyDirty && !force) return null;
+    if (this.early) return null; // ainda hidratando: o buffer nao esta completo
+    this.historyDirty = false;
+    try {
+      return this.serializer.serialize({ scrollback: Math.min(this.term.options.scrollback ?? 0, SAVED_HISTORY_LINES) });
+    } catch {
+      return null;
+    }
   }
 
   /** Controle de fluxo: o main pausa o pty se o xterm ficar muito para tras. */
@@ -662,7 +715,17 @@ export class TerminalPane implements Panel {
 
   /** Carrega o output ja produzido antes deste painel existir. */
   private async hydrate(): Promise<void> {
-    const replay = await this.api.replayTerminal(this.id);
+    // Terminal restaurado: o que estava na tela antes de fechar o app vem
+    // primeiro, separado do shell novo por uma linha.
+    const [history, replay] = await Promise.all([
+      this.api.takeScrollback(this.id),
+      this.api.replayTerminal(this.id),
+    ]);
+    if (history) {
+      this.term.write(history);
+      this.term.write(`\x1b[0m\r\n\x1b[2m── sessao anterior, restaurada em ${new Date().toLocaleString()} ──\x1b[0m\r\n`);
+      this.historyDirty = true;
+    }
     if (replay.data) this.term.write(replay.data);
     this.lastSeq = replay.seq;
     const early = this.early ?? [];
@@ -730,6 +793,7 @@ export class TerminalPane implements Panel {
       null,
       ...(this.snapshot.worktree ? [{ label: 'Ver diff do worktree', run: () => this.callbacks.onShowDiff(this.id) }] : []),
       { label: 'Abrir no editor', run: () => this.callbacks.onOpenEditor(this.id) },
+      { label: 'Duplicar terminal', run: () => this.callbacks.onDuplicate(this.id) },
       null,
       { label: 'Fechar terminal', hint: 'Ctrl+Shift+W', danger: true, run: () => this.callbacks.onClose(this.id) },
     ]);
