@@ -21,6 +21,8 @@ export interface ToolbarCallbacks {
   onSettings(): void;
   /** Abre/fecha o painel de agentes. */
   onToggleAgents(): void;
+  /** Reiniciar instalando a versao nova ja baixada. */
+  onInstallUpdate(): void;
 }
 
 export class Toolbar {
@@ -37,6 +39,7 @@ export class Toolbar {
   private readonly restoreBtn = document.createElement('button');
   private readonly workspaceBtn = document.createElement('button');
   private readonly agentsBtn = document.createElement('button');
+  private readonly updateBtn = document.createElement('button');
 
   constructor(private readonly callbacks: ToolbarCallbacks, api: MultiTermApi) {
     this.element.className = 'toolbar';
@@ -118,6 +121,10 @@ export class Toolbar {
     this.agentsBtn.title = 'Painel com todos os agentes e o que cada um espera de voce (Ctrl+Shift+G)';
     this.agentsBtn.addEventListener('click', () => this.callbacks.onToggleAgents());
 
+    this.updateBtn.className = 'update-btn';
+    this.updateBtn.hidden = true;
+    this.updateBtn.addEventListener('click', () => this.callbacks.onInstallUpdate());
+
     const settingsBtn = document.createElement('button');
     settingsBtn.className = 'settings-btn';
     settingsBtn.textContent = '⚙';
@@ -133,6 +140,7 @@ export class Toolbar {
       this.attentionBtn,
       this.sessionGroup,
       spacer,
+      this.updateBtn,
       usage.element,
       this.pageGroup,
       this.layoutBtn,
@@ -140,6 +148,15 @@ export class Toolbar {
       settingsBtn,
     );
   }
+  /** Versao nova baixada: o botao para reiniciar e atualizar aparece. */
+  setUpdate(version: string | null): void {
+    this.updateBtn.hidden = version === null;
+    if (!version) return;
+    this.updateBtn.textContent = `⬆ v${version}`;
+    this.updateBtn.title = `MultiTerm ${version} baixado. Clique para reiniciar e atualizar ` +
+      '(os terminais fecham; restaure a sessao depois).';
+  }
+
   setAgentsPanel(open: boolean): void {
     this.agentsBtn.classList.toggle('active', open);
     this.agentsBtn.setAttribute('aria-pressed', String(open));

@@ -25,6 +25,8 @@ export interface Settings {
   cursorBlink: boolean;
   /** Linhas guardadas no historico de cada terminal. */
   scrollback: number;
+  /** Procurar versoes novas nas Releases (so no app instalado por pacote). */
+  checkUpdates: boolean;
 }
 
 export type CursorStyle = 'block' | 'bar' | 'underline';
@@ -52,6 +54,7 @@ export function defaultSettings(): Settings {
     cursorStyle: 'block',
     cursorBlink: true,
     scrollback: 10_000,
+    checkUpdates: true,
   };
 }
 
@@ -78,6 +81,7 @@ export function parseSettings(raw: unknown): Settings {
     base.cursorStyle = input.cursorStyle as CursorStyle;
   }
   if (typeof input.cursorBlink === 'boolean') base.cursorBlink = input.cursorBlink;
+  if (typeof input.checkUpdates === 'boolean') base.checkUpdates = input.checkUpdates;
   if (typeof input.scrollback === 'number' && Number.isFinite(input.scrollback)) {
     base.scrollback = Math.round(Math.min(SCROLLBACK_MAX, Math.max(SCROLLBACK_MIN, input.scrollback)));
   }

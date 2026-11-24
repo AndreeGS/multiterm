@@ -40,12 +40,22 @@ chmod +x MultiTerm-0.2.0-x86_64.AppImage
 No Ubuntu 22.04+ o AppImage precisa da libfuse2 (`sudo apt install libfuse2t64`
 no 24.04, `libfuse2` no 22.04); sem ela, prefira o `.deb`.
 
+**Atualizacoes**: instalado pelo `.deb` ou pelo AppImage, o app procura versoes
+novas nas Releases a cada 6 horas e baixa em segundo plano; quando termina,
+aparece `⬆ v<versao>` na barra, e clicar reinicia atualizando (os terminais
+fecham: restaure a sessao depois). No AppImage o proprio arquivo e trocado; no
+`.deb` o sistema pede a senha de administrador. Da para desligar em
+Configuracoes. Instalado pelo codigo, quem atualiza e o `git pull`.
+
 Seus dados (`~/.config/multiterm`) sao os mesmos em qualquer forma de
 instalacao. Se voce usava o `npm run app:install`, rode `npm run app:uninstall`
 antes: o atalho dele, em `~/.local`, tem prioridade sobre o do pacote.
 
 Para gerar os pacotes localmente: `npm run dist` (saem em `release/`). Uma tag
-`v*` publicada no GitHub gera a Release automaticamente.
+`v*` publicada no GitHub gera a Release automaticamente. Ela leva o `latest-linux.yml`, que e o
+que o auto-update dos apps instalados le. Para testar o update sem publicar, rode
+o app empacotado com `MULTITERM_UPDATE_FEED=<url de uma pasta com o
+latest-linux.yml e o AppImage novo>`.
 
 ### A partir do codigo
 
@@ -207,6 +217,25 @@ nome do terminal) e o app:
   terminal (a do worktree, se tiver) no editor das Configuracoes — vale para
   qualquer terminal, nao so os com worktree.
 
+### Fechar o ciclo pelo diff
+
+O rodape do diff entrega o que o agente fez sem sair do app:
+
+- **Commitar tudo**: `git add -A` e `git commit` no worktree, com a mensagem do
+  campo (sugerida pelo nome da branch: `feat/login` vira `feat: login`;
+  `Enter` commita). Roda os seus hooks e a sua assinatura (GPG pode pedir a
+  senha);
+- **Mesclar em `<base>`**: mescla a branch na base, na copia principal do
+  repositorio. Pede confirmacao (segundo clique) e exige o worktree todo
+  commitado e a copia principal na base e sem mudancas. Se der conflito,
+  nada muda (`merge --abort`) e o aviso diz como resolver no worktree;
+- **Abrir PR**: `git push -u origin <branch>` e `gh pr create --fill` contra
+  a base (precisa do [GitHub CLI](https://cli.github.com) autenticado). O link
+  do PR aparece no rodape; um PR que ja existe tambem.
+
+O resultado (ou o erro do git) aparece embaixo dos botoes, e o diff e o status
+do cabecalho se atualizam.
+
 Ao fechar (`✕`) um terminal com worktree, o app pergunta se remove a pasta,
 avisando se ha mudancas nao commitadas. **A branch nunca e apagada**: o que foi
 commitado continua no repositorio. Se outro terminal ainda esta no mesmo
@@ -263,6 +292,7 @@ aplicado na hora e fica salvo no `config.json`:
 - **Cursor dos terminais**: bloco, barra ou sublinhado, piscando ou nao;
 - **Historico de cada terminal**: de 1.000 a 100.000 linhas (padrao 10.000);
 - **Tamanho da interface**: 90% a 140% para barra, cabecalhos e dialogos;
+- **Atualizacoes**: procurar versoes novas (so no app instalado por pacote);
 - **Editor**: o programa do "Abrir no editor" (padrao `code`; ex.: `cursor`,
   `subl -n`). As palavras sao separadas por espaco e o diretorio vai no fim,
   sem shell no meio.

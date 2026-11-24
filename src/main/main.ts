@@ -25,7 +25,7 @@ import { FramesService } from '../application/canvas/frames-service.js';
 import { TasksService } from '../application/tasks/tasks-service.js';
 import { UsageService } from '../application/usage/usage-service.js';
 import { WorkspaceService } from '../application/workspace/workspace-service.js';
-import { parseWorktreeInfo } from '../domain/git/worktree.js';
+import { cleanCommitMessage, parseWorktreeInfo, type WorktreeInfo } from '../domain/git/worktree.js';
 import type { NotePatch } from '../domain/notes/note.js';
 import type { CanvasTextPatch } from '../domain/canvas/text.js';
 import type { CanvasFramePatch } from '../domain/canvas/frame.js';
@@ -57,11 +57,13 @@ import { JsonFramesStore } from '../infrastructure/persistence/json-frames-store
 import { JsonTasksStore } from '../infrastructure/persistence/json-tasks-store.js';
 import { ScrollbackStore } from '../infrastructure/persistence/scrollback-store.js';
 import { GitCli } from '../infrastructure/git/git-cli.js';
+import { GhCli } from '../infrastructure/git/gh-cli.js';
 import { startClaudeHooks, type ClaudeHooks } from '../infrastructure/agent/claude-hooks.js';
 import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
 import { hasClaudeTranscript, hasProjectConversations } from '../infrastructure/usage/claude-paths.js';
 import { CHANNELS, type BootstrapState, type RestoredSession } from '../shared/contract.js';
 import { AttentionNotifier } from './attention.js';
+import { Updater } from './updater.js';
 import { FlowControl } from './flow-control.js';
 import { OutputBatcher } from './output-batcher.js';
 
@@ -75,6 +77,10 @@ let texts: TextsService;
 let frames: FramesService;
 let tasks: TasksService;
 let hooks: ClaudeHooks | null = null;
+const updater = new Updater(
+  () => workspace.current().settings.checkUpdates,
+  (version) => send(CHANNELS.updateReady, version),
+);
 let scrollback: ScrollbackStore;
 /**
  * Terminais restaurados cujo historico salvo ainda nao foi pedido pelo
@@ -86,7 +92,7 @@ const MAX_HISTORY_CHARS = 4 * 1024 * 1024;
 /** De quanto em quanto tempo o programa em foreground de cada terminal e conferido. */
 const FOREGROUND_POLL_MS = 1500;
 let foregroundTimer: NodeJS.Timeout | null = null;
-const worktrees = new WorktreeService(new GitCli());
+const worktrees = new WorktreeService(new GitCli(), new GhCli());
 const worktreeStatus = new WorktreeStatusService(worktrees, (id, status) => send(CHANNELS.worktreeStatus, id, status));
 const flow = new FlowControl();
 const output = new OutputBatcher((batch) => {
@@ -350,6 +356,8 @@ function registerIpc(): void {
       homeDir: homedir(),
       configPath: join(app.getPath('userData'), 'config.json'),
       recoveredFiles: takeRecoveredFiles(),
+      pendingUpdate: updater.pending,
+      canUpdate: Updater.supported(),
     };
   });
 
@@ -462,6 +470,28 @@ function registerIpc(): void {
     if (!worktree) throw new Error('Este terminal nao tem worktree.');
     return worktrees.diff(worktree);
   });
+  // Fechar o ciclo do worktree: sempre pelo id do terminal (o main acha o worktree).
+  const worktreeOf = (id: unknown): WorktreeInfo => {
+    const worktree = typeof id === 'string' ? terminals.snapshot(id)?.worktree : null;
+    if (!worktree) throw new Error('Este terminal nao tem worktree.');
+    return worktree;
+  };
+  handle(CHANNELS.worktreeCommit, async (_event, id: unknown, raw: unknown) => {
+    const message = cleanCommitMessage(raw);
+    if (!message) throw new Error('Escreva uma mensagem de commit.');
+    await worktrees.commit(worktreeOf(id), message);
+    worktreeStatus.request(id as string);
+  });
+  handle(CHANNELS.worktreeMerge, async (_event, id: unknown) => {
+    const outcome = await worktrees.mergeIntoBase(worktreeOf(id));
+    worktreeStatus.request(id as string);
+    return outcome;
+  });
+  handle(CHANNELS.worktreeOpenPr, async (_event, id: unknown) => {
+    const url = await worktrees.openPullRequest(worktreeOf(id));
+    worktreeStatus.request(id as string);
+    return url;
+  });
   handle(CHANNELS.openInEditor, (_event, id: unknown) => {
     const snapshot = typeof id === 'string' ? terminals.snapshot(id) : null;
     if (!snapshot) return 'Terminal nao encontrado.';
@@ -519,6 +549,7 @@ function registerIpc(): void {
   });
   handle(CHANNELS.usageGet, () => usage.current());
   on(CHANNELS.usageRefresh, () => void usage.refresh());
+  on(CHANNELS.installUpdate, () => updater.install());
   on(CHANNELS.setLayout, (_event, layout: unknown) => {
     if (isLayout(layout)) workspace.setLayout(layout);
   });
@@ -650,6 +681,7 @@ function shutdown(): void {
   persistBounds();
   usage?.stop();
   worktreeStatus.stop();
+  updater.stop();
   if (foregroundTimer) clearInterval(foregroundTimer);
   hooks?.stop();
   output.dispose();
@@ -780,6 +812,7 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     usage.start();
     worktreeStatus.start();
+    updater.start();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

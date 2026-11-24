@@ -1,5 +1,5 @@
 import { parseUnifiedDiff, type DiffFile } from '../../domain/git/diff.js';
-import type { WorktreeDiff } from '../../domain/git/worktree.js';
+import { suggestCommitMessage, type MergeResult, type WorktreeDiff } from '../../domain/git/worktree.js';
 import { trapFocus } from './modal.js';
 
 /** Um arquivo enorme (lockfile regenerado) mostra so o comeco: o DOM nao aguenta 50 mil linhas. */
@@ -12,11 +12,30 @@ const CHANGE_LABEL: Record<DiffFile['change'], string> = {
   modified: '',
 };
 
+/** Acoes do rodape: fechar o ciclo do worktree sem sair do app. */
+export interface DiffActions {
+  readonly branch: string;
+  commit(message: string): Promise<void>;
+  merge(): Promise<{ base: string; result: MergeResult }>;
+  openPr(): Promise<string>;
+  openUrl(url: string): void;
+}
+
+const MERGE_TEXT: Record<MergeResult, (base: string) => string> = {
+  'fast-forward': (base) => `Mesclado: "${base}" avancou ate esta branch.`,
+  merge: (base) => `Mesclado em "${base}" com um commit de merge.`,
+  'up-to-date': (base) => `"${base}" ja tinha tudo desta branch.`,
+};
+
+/** Segundo clique confirma; depois disto o botao volta ao normal. */
+const CONFIRM_MS = 4000;
+
 /**
  * O que o agente mudou no worktree: lista de arquivos a esquerda, o diff do
- * escolhido a direita. So leitura. `R` recarrega, setas trocam de arquivo, Esc fecha.
+ * escolhido a direita. `R` recarrega, setas trocam de arquivo, Esc fecha. Com
+ * `actions`, o rodape commita, mescla na base e abre o PR.
  */
-export function openDiffDialog(title: string, load: () => Promise<WorktreeDiff>): Promise<void> {
+export function openDiffDialog(title: string, load: () => Promise<WorktreeDiff>, actions?: DiffActions): Promise<void> {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.className = 'overlay';
@@ -51,6 +70,9 @@ export function openDiffDialog(title: string, load: () => Promise<WorktreeDiff>)
     body.append(files, view);
 
     modal.append(head, body);
+    let base: string | null = null;
+    const foot = actions ? buildFoot(actions, () => base, () => void reload()) : null;
+    if (foot) modal.append(foot.element);
     overlay.append(modal);
     document.body.append(overlay);
     const release = trapFocus(overlay);
@@ -141,6 +163,8 @@ export function openDiffDialog(title: string, load: () => Promise<WorktreeDiff>)
       try {
         const diff = await load();
         if (settled) return;
+        base = diff.base;
+        foot?.refresh();
         parsed = parseUnifiedDiff(diff.text);
         const index = parsed.findIndex((file) => file.path === previous);
         selected = index >= 0 ? index : 0;
@@ -176,6 +200,9 @@ export function openDiffDialog(title: string, load: () => Promise<WorktreeDiff>)
       resolve();
     };
     const onKey = (event: KeyboardEvent) => {
+      // Escrevendo a mensagem de commit: as teclas sao do campo (Esc ainda fecha).
+      const typing = event.target instanceof HTMLInputElement;
+      if (typing && event.key !== 'Escape') return;
       const handled = () => {
         event.preventDefault();
         event.stopPropagation();
@@ -204,4 +231,117 @@ export function openDiffDialog(title: string, load: () => Promise<WorktreeDiff>)
     files.focus();
     void reload();
   });
+}
+
+/**
+ * Rodape: mensagem + Commitar tudo, Mesclar em <base> (com confirmacao no
+ * segundo clique) e Abrir PR. Uma acao por vez; o resultado (ou o erro do
+ * git) aparece ao lado.
+ */
+function buildFoot(actions: DiffActions, base: () => string | null, reload: () => void) {
+  const element = document.createElement('div');
+  element.className = 'diff-foot';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'diff-commit-input';
+  input.spellcheck = false;
+  input.value = suggestCommitMessage(actions.branch);
+  input.setAttribute('aria-label', 'Mensagem de commit');
+  const commitBtn = document.createElement('button');
+  commitBtn.type = 'button';
+  commitBtn.textContent = 'Commitar tudo';
+  commitBtn.title = 'git add -A e git commit no worktree (com os seus hooks e assinatura)';
+  const mergeBtn = document.createElement('button');
+  mergeBtn.type = 'button';
+  const prBtn = document.createElement('button');
+  prBtn.type = 'button';
+  prBtn.textContent = 'Abrir PR';
+  prBtn.title = 'git push da branch e gh pr create contra a base';
+  const status = document.createElement('span');
+  status.className = 'diff-foot-status';
+  element.append(input, commitBtn, mergeBtn, prBtn, status);
+
+  let busy = false;
+  let confirmUntil = 0;
+  const refresh = () => {
+    const target = base();
+    const confirming = Date.now() < confirmUntil;
+    mergeBtn.textContent = confirming ? `Confirmar: mesclar em ${target}?` : `Mesclar em ${target ?? 'base'}`;
+    mergeBtn.classList.toggle('danger', confirming);
+    mergeBtn.title = target
+      ? `Mescla esta branch em "${target}" na copia principal do repositorio (que precisa estar em "${target}" e limpa). Conflito: nada muda.`
+      : 'Este worktree nao tem branch base';
+    for (const btn of [commitBtn, mergeBtn, prBtn]) btn.disabled = busy;
+    if (!target) mergeBtn.disabled = prBtn.disabled = true;
+    input.disabled = busy;
+  };
+  const show = (text: string, kind: 'ok' | 'error' | 'busy', url?: string) => {
+    status.className = `diff-foot-status ${kind}`;
+    status.replaceChildren(text);
+    if (url) {
+      const link = document.createElement('a');
+      link.href = '#';
+      link.textContent = url;
+      link.addEventListener('click', (event) => {
+        event.preventDefault();
+        actions.openUrl(url);
+      });
+      status.append(' ', link);
+    }
+  };
+  const runAction = async (label: string, task: () => Promise<void>) => {
+    if (busy) return;
+    busy = true;
+    confirmUntil = 0;
+    refresh();
+    show(label, 'busy');
+    try {
+      await task();
+    } catch (error) {
+      show((error as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), 'error');
+    } finally {
+      busy = false;
+      refresh();
+      reload();
+    }
+  };
+
+  commitBtn.addEventListener('click', () => {
+    const message = input.value.trim();
+    if (!message) {
+      show('Escreva uma mensagem de commit.', 'error');
+      input.focus();
+      return;
+    }
+    void runAction('Commitando…', async () => {
+      await actions.commit(message);
+      show('Commitado.', 'ok');
+    });
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      commitBtn.click();
+    }
+  });
+  mergeBtn.addEventListener('click', () => {
+    if (Date.now() >= confirmUntil) {
+      confirmUntil = Date.now() + CONFIRM_MS;
+      refresh();
+      setTimeout(refresh, CONFIRM_MS + 50);
+      return;
+    }
+    void runAction('Mesclando…', async () => {
+      const outcome = await actions.merge();
+      show(MERGE_TEXT[outcome.result](outcome.base), 'ok');
+    });
+  });
+  prBtn.addEventListener('click', () => {
+    void runAction('Enviando a branch e abrindo o PR…', async () => {
+      const url = await actions.openPr();
+      show('PR:', 'ok', url);
+    });
+  });
+  refresh();
+  return { element, refresh };
 }

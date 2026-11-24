@@ -7,12 +7,16 @@ import {
   parseWorktreeList,
   type Git,
   type GitInfo,
+  type MergeResult,
   type WorktreeChanges,
   type WorktreeDiff,
   type WorktreeEntry,
 } from '../../domain/git/worktree.js';
 
 const TIMEOUT_MS = 20_000;
+/** Commit e merge rodam hooks do repo e podem pedir a senha da chave GPG. */
+const COMMIT_TIMEOUT_MS = 3 * 60_000;
+const PUSH_TIMEOUT_MS = 2 * 60_000;
 /** Checkout de repo grande (ou com LFS, hooks) passa facil de 20s; matar no meio deixa um worktree pela metade. */
 const ADD_TIMEOUT_MS = 5 * 60_000;
 /** Diff maior que isto e cortado: a janela nao precisa de megabytes de lockfile. */
@@ -142,5 +146,45 @@ export class GitCli implements Git {
 
     const cut = truncateDiff(text, MAX_DIFF_CHARS);
     return { text: cut.text, base, truncated: truncated || cut.truncated };
+  }
+
+  async commitAll(path: string, message: string): Promise<void> {
+    await run(['add', '-A'], path);
+    const result = await git(['commit', '-m', message], path, { timeout: COMMIT_TIMEOUT_MS });
+    if (result.ok) return;
+    const output = `${result.stdout}\n${result.stderr}`;
+    if (/nothing (added )?to commit|nada (adicionado )?para (submeter|commit)/i.test(output)) throw new Error('Nada para commitar.');
+    throw new Error(result.stderr.trim() || result.stdout.trim() || 'git commit falhou');
+  }
+
+  async merge(repo: string, branch: string, base: string): Promise<MergeResult> {
+    const current = (await git(['branch', '--show-current'], repo)).stdout.trim();
+    if (current !== base) {
+      throw new Error(`A copia principal esta em "${current || 'HEAD solto'}", nao em "${base}". Troque para "${base}" e tente de novo.`);
+    }
+    // Arquivos novos soltos nao impedem (o git recusa sozinho se um seria sobrescrito).
+    if ((await run(['status', '--porcelain', '--untracked-files=no'], repo)).trim()) {
+      throw new Error(`A copia principal tem mudancas nao commitadas em "${base}". Commite ou guarde (stash) antes de mesclar.`);
+    }
+    const before = (await run(['rev-parse', 'HEAD'], repo)).trim();
+    const result = await git(['merge', '--no-edit', `refs/heads/${branch}`], repo, { timeout: COMMIT_TIMEOUT_MS });
+    if (!result.ok) {
+      // Conflito (ou hook que recusou): a copia principal volta como estava.
+      await git(['merge', '--abort'], repo);
+      const conflict = /conflict|conflito/i.test(`${result.stdout}\n${result.stderr}`);
+      throw new Error(conflict
+        ? `"${branch}" conflita com "${base}". Nada foi mesclado: resolva no worktree (ex.: git merge ${base}) e tente de novo.`
+        : result.stderr.trim() || result.stdout.trim() || 'git merge falhou');
+    }
+    const head = (await run(['rev-parse', 'HEAD'], repo)).trim();
+    if (head === before) return 'up-to-date';
+    const parents = (await run(['rev-list', '--parents', '-n', '1', 'HEAD'], repo)).trim().split(/\s+/).length - 1;
+    return parents > 1 ? 'merge' : 'fast-forward';
+  }
+
+  async push(path: string, branch: string): Promise<void> {
+    const remotes = (await run(['remote'], path)).split('\n').map((line) => line.trim());
+    if (!remotes.includes('origin')) throw new Error('O repositorio nao tem um remote "origin".');
+    await run(['push', '-u', 'origin', `refs/heads/${branch}:refs/heads/${branch}`], path, PUSH_TIMEOUT_MS);
   }
 }

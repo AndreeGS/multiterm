@@ -37,6 +37,14 @@ linux:
   maintainer: AndreeGS <AndreeGS@users.noreply.github.com>
   synopsis: Painel para varios terminais e agentes numa janela so
 
+# De onde o auto-update (electron-updater) le as versoes: as Releases do
+# GitHub. Vira o app-update.yml dentro do pacote; publicar continua com o gh
+# no release.yml (o `npm run dist` usa --publish never).
+publish:
+  provider: github
+  owner: AndreeGS
+  repo: multiterm
+
 appImage:
   artifactName: MultiTerm-${version}-${arch}.AppImage
 deb:

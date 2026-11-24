@@ -14,7 +14,7 @@ import type { CanvasRect, CanvasView, GridLayoutId, LayoutId, TrackSizes } from 
 import type { Settings } from '../domain/workspace/settings.js';
 import type { PaneColor } from '../domain/workspace/colors.js';
 import type { TemplateInput, TerminalTemplate } from '../domain/workspace/template.js';
-import type { GitInfo, WorktreeDiff, WorktreeInfo, WorktreeStatus } from '../domain/git/worktree.js';
+import type { GitInfo, MergeResult, WorktreeDiff, WorktreeInfo, WorktreeStatus } from '../domain/git/worktree.js';
 import type { Workspace, WorkspaceSummary } from '../domain/workspace/workspace.js';
 
 export interface BootstrapState {
@@ -45,6 +45,10 @@ export interface BootstrapState {
   readonly configPath: string;
   /** Arquivos de dados que estavam corrompidos nesta abertura (para avisar). */
   readonly recoveredFiles: readonly RecoveredFileNotice[];
+  /** Versao nova ja baixada, esperando reiniciar; `null` = nenhuma. */
+  readonly pendingUpdate: string | null;
+  /** O app pode se atualizar sozinho (instalado por .deb ou AppImage)? */
+  readonly canUpdate: boolean;
 }
 
 export interface RecoveredFileNotice {
@@ -115,6 +119,12 @@ export interface MultiTermApi {
   requestWorktreeStatus(id: string): void;
   /** Diff do worktree do terminal contra a base (o main acha o worktree pelo id). */
   worktreeDiff(id: string): Promise<WorktreeDiff>;
+  /** Commita tudo no worktree do terminal. Rejeita com a mensagem do git. */
+  worktreeCommit(id: string, message: string): Promise<void>;
+  /** Mescla a branch do worktree na base, na copia principal. */
+  worktreeMerge(id: string): Promise<{ base: string; result: MergeResult }>;
+  /** Envia a branch e abre um PR (gh) contra a base; devolve a URL. */
+  worktreeOpenPr(id: string): Promise<string>;
   /** Abre o diretorio do terminal no editor das configuracoes; erro = mensagem para o usuario. */
   openInEditor(id: string): Promise<string | null>;
 
@@ -178,6 +188,10 @@ export interface MultiTermApi {
   onTerminalUpdate(listener: (snapshot: TerminalSnapshot) => void): () => void;
   onTerminalClose(listener: (id: string) => void): () => void;
   onUsageUpdate(listener: (summary: UsageSummary) => void): () => void;
+  /** Reinicia o app instalando a versao baixada. */
+  installUpdate(): void;
+  /** Uma versao nova foi baixada e instala ao reiniciar. */
+  onUpdateReady(listener: (version: string) => void): () => void;
   /** Clicou na notificacao de um terminal: trazer ele para a tela. */
   onFocusTerminal(listener: (id: string) => void): () => void;
   /** `+novos ~alterados ↑frente` de um terminal com worktree; `null` = indisponivel. */
@@ -223,6 +237,9 @@ export const CHANNELS = {
   worktreeStatus: 'git:worktree-status',
   worktreeStatusRequest: 'git:worktree-status-request',
   worktreeDiff: 'git:worktree-diff',
+  worktreeCommit: 'git:worktree-commit',
+  worktreeMerge: 'git:worktree-merge',
+  worktreeOpenPr: 'git:worktree-open-pr',
   openInEditor: 'terminal:open-editor',
 
   templateSave: 'template:save',
@@ -231,6 +248,8 @@ export const CHANNELS = {
   usageGet: 'usage:get',
   usageRefresh: 'usage:refresh',
   usageUpdate: 'usage:update',
+  updateReady: 'app:update-ready',
+  installUpdate: 'app:install-update',
 
   create: 'terminal:create',
   close: 'terminal:close',
