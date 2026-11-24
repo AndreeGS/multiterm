@@ -265,6 +265,10 @@ export class App {
       if (event.key === 'Alt') hideIndexes();
     });
     window.addEventListener('blur', hideIndexes);
+    // Historico de cada terminal salvo para restaurar a sessao: de tempos em
+    // tempos (so quem teve output) e ao fechar a janela (todos).
+    setInterval(() => this.saveHistories(false), 60_000);
+    window.addEventListener('beforeunload', () => this.saveHistories(true));
     // "ha 5 min" esperando: anda sozinho, sem update do main.
     setInterval(() => {
       const now = Date.now();
@@ -335,6 +339,13 @@ export class App {
     const elsewhere = [...this.attention].some((id) => this.panes.get(id)?.workspaceId !== this.activeWorkspace);
     this.toolbar.setWorkspace(this.workspaceName(this.activeWorkspace), elsewhere);
     this.refreshAgents();
+  }
+
+  private saveHistories(force: boolean): void {
+    for (const pane of this.terminalPanes(true)) {
+      const history = pane.takeHistory(force);
+      if (history !== null) this.api.saveScrollback(pane.id, history);
+    }
   }
 
   /** Abre/fecha o painel de agentes (e lembra a escolha). */
@@ -555,6 +566,7 @@ export class App {
       items.push({ label: `Buscar em "${focusedPane.name}"`, hint: 'Ctrl+Shift+F', run: () => focusedPane.openSearch() });
       items.push({ label: `Cor de "${focusedPane.name}"`, run: () => void focusedPane.pickColor() });
       items.push({ label: `Abrir "${focusedPane.name}" no editor`, run: () => void this.openInEditor(focusedPane.id) });
+      items.push({ label: `Duplicar "${focusedPane.name}"`, run: () => void this.duplicateTerminal(focusedPane.id) });
       if (focusedPane.info.worktree) {
         items.push({ label: `Diff do worktree de "${focusedPane.name}"`, run: () => void this.showDiff(focusedPane.id) });
         items.push({ label: `Fechar "${focusedPane.name}" e remover o worktree`, run: () => void this.closePane(focusedPane.id) });
@@ -836,6 +848,21 @@ export class App {
     return snapshot;
   }
 
+  /**
+   * Outro terminal igual: nome, comando, cor e o diretorio em que o shell esta
+   * agora. Um `claude` ganha conversa nova; um terminal de worktree abre no
+   * mesmo worktree (o main reaproveita o da branch).
+   */
+  private async duplicateTerminal(id: string): Promise<void> {
+    const pane = this.panes.get(id);
+    if (!(pane instanceof TerminalPane)) return;
+    const { name, cwd, command, color, shell, worktree } = pane.info;
+    await this.openTerminal(
+      { name: `${name} (copia)`, cwd: worktree ? worktree.repo : cwd, shell, command: command ?? '', color },
+      worktree ? worktree.branch : null,
+    );
+  }
+
   /** Um item de paleta por template: abre o terminal direto, sem dialogo. */
   private templateItems(): PaletteItem[] {
     return this.templates.map((template) => ({
@@ -1113,6 +1140,7 @@ export class App {
       onQueueChange: (listId: string, terminalId: string | null, hasNext: boolean) =>
         this.setQueue(listId, terminalId, hasNext),
       onOpenEditor: (id: string) => void this.openInEditor(id),
+      onDuplicate: (id: string) => void this.duplicateTerminal(id),
     };
   }
 

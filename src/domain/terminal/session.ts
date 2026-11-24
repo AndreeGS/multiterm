@@ -3,7 +3,15 @@ import { parseWorktreeInfo, type WorktreeInfo } from '../git/worktree.js';
 import { parsePaneColor, type PaneColor } from '../workspace/colors.js';
 import { parseWorkspaceId } from '../workspace/workspace.js';
 import { PERMISSION_NOTICE, type AgentEvent, type AgentState, type PermissionAnswer, type PermissionAsk } from './agent.js';
-import { claudeLaunchCommand, cleanCommand, parseSessionId, sessionIdOf, wantsOwnSession, withHookSettings } from './command.js';
+import {
+  claudeLaunchCommand,
+  cleanCommand,
+  isClaudeCommand,
+  parseSessionId,
+  sessionIdOf,
+  wantsOwnSession,
+  withHookSettings,
+} from './command.js';
 import type { Pty, PtyFactory } from './pty.js';
 import { SignalScanner } from './signals.js';
 import type { ReplaySnapshot, TerminalSize, TerminalSnapshot, TerminalSpec, TerminalStatus } from './types.js';
@@ -192,6 +200,7 @@ export class TerminalSession {
       this.markActive();
       if (signal) this.raiseNotice(signal);
       for (const mark of this.scanner.takeMarks()) this.onShellMark(mark);
+      this.followCwd(this.scanner.takeCwd());
       if (this.commandPending) {
         // O rc do shell ja rodou e o prompt apareceu: agora o comando entra
         // como se voce tivesse digitado. Nao arma o aviso de ocioso — um
@@ -439,6 +448,17 @@ export class TerminalSession {
       ? claudeLaunchCommand(this.command, this.claudeSession, this.hasTranscript(this.claudeSession))
       : this.command;
     return this.hooks ? withHookSettings(command, this.hooks.settingsArg) : command;
+  }
+
+  /**
+   * O shell mudou de diretorio (OSC 7): o terminal passa a reiniciar e a ser
+   * restaurado ali. Um terminal do Claude fica no diretorio em que abriu: a
+   * conversa dele e daquele projeto, e retoma-la em outro falharia.
+   */
+  private followCwd(cwd: string | null): void {
+    if (!cwd || cwd === this.cwd || isClaudeCommand(this.command)) return;
+    this.cwd = cwd;
+    this.emitUpdate();
   }
 
   private onShellMark(mark: ShellMark): void {

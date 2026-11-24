@@ -1,11 +1,15 @@
 import type { ISearchDecorationOptions } from '@xterm/addon-search';
 import type { ITheme } from '@xterm/xterm';
-import type { Settings, ThemeId } from '../domain/workspace/settings.js';
+import type { CursorStyle, Settings, ThemeId } from '../domain/workspace/settings.js';
 
 /** O que um painel precisa saber para se pintar. */
 export interface Appearance {
   readonly theme: ThemeId;
   readonly fontSize: number;
+  readonly fontFamily: string;
+  readonly cursorStyle: CursorStyle;
+  readonly cursorBlink: boolean;
+  readonly scrollback: number;
 }
 
 /**

@@ -560,6 +560,9 @@ body.show-indexes .pane-header[data-index]::before {
   text-align: center;
 }
 
+/* Arquivo sendo arrastado sobre o terminal. */
+.pane.drop-target { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+
 /* ---------- painel de agentes ---------- */
 .agents-btn.active { color: var(--accent); border-color: var(--border-active); }
 .agents-panel {
@@ -890,7 +893,8 @@ body.show-indexes .pane-header[data-index]::before {
   letter-spacing: 0.06em;
   color: var(--fg-dim);
 }
-.modal input[type="text"] {
+.modal input[type="text"],
+.modal input[type="number"] {
   font: 13px ui-monospace, "JetBrains Mono", Menlo, monospace;
   color: var(--fg);
   background: var(--input-bg);
@@ -900,7 +904,8 @@ body.show-indexes .pane-header[data-index]::before {
   text-transform: none;
   letter-spacing: normal;
 }
-.modal input[type="text"]:focus { outline: none; border-color: var(--border-active); }
+.modal input[type="text"]:focus,
+.modal input[type="number"]:focus { outline: none; border-color: var(--border-active); }
 .dir-row { display: flex; gap: 6px; }
 .dir-row input { flex: 1; }
 .recent {

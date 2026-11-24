@@ -19,7 +19,20 @@ export interface Settings {
   editorCommand: string;
   /** Painel lateral com todos os agentes aberto. */
   agentsPanel: boolean;
+  /** Fonte dos terminais (lista CSS de familias). */
+  fontFamily: string;
+  cursorStyle: CursorStyle;
+  cursorBlink: boolean;
+  /** Linhas guardadas no historico de cada terminal. */
+  scrollback: number;
 }
+
+export type CursorStyle = 'block' | 'bar' | 'underline';
+export const CURSOR_STYLES: readonly CursorStyle[] = ['block', 'bar', 'underline'];
+export const DEFAULT_FONT_FAMILY = 'ui-monospace, "JetBrains Mono", "Fira Code", Menlo, monospace';
+export const SCROLLBACK_MIN = 1000;
+export const SCROLLBACK_MAX = 100_000;
+const MAX_FONT_FAMILY = 200;
 
 export const FONT_SIZE_MIN = 9;
 export const FONT_SIZE_MAX = 24;
@@ -28,7 +41,18 @@ export const DEFAULT_EDITOR = 'code';
 const MAX_EDITOR_COMMAND = 200;
 
 export function defaultSettings(): Settings {
-  return { theme: 'dark', fontSize: 12, uiScale: 1, showLinks: true, editorCommand: DEFAULT_EDITOR, agentsPanel: false };
+  return {
+    theme: 'dark',
+    fontSize: 12,
+    uiScale: 1,
+    showLinks: true,
+    editorCommand: DEFAULT_EDITOR,
+    agentsPanel: false,
+    fontFamily: DEFAULT_FONT_FAMILY,
+    cursorStyle: 'block',
+    cursorBlink: true,
+    scrollback: 10_000,
+  };
 }
 
 export function isTheme(value: unknown): value is ThemeId {
@@ -49,10 +73,28 @@ export function parseSettings(raw: unknown): Settings {
   }
   if (typeof input.showLinks === 'boolean') base.showLinks = input.showLinks;
   if (typeof input.agentsPanel === 'boolean') base.agentsPanel = input.agentsPanel;
+  if (typeof input.fontFamily === 'string') base.fontFamily = cleanFontFamily(input.fontFamily);
+  if (typeof input.cursorStyle === 'string' && (CURSOR_STYLES as readonly string[]).includes(input.cursorStyle)) {
+    base.cursorStyle = input.cursorStyle as CursorStyle;
+  }
+  if (typeof input.cursorBlink === 'boolean') base.cursorBlink = input.cursorBlink;
+  if (typeof input.scrollback === 'number' && Number.isFinite(input.scrollback)) {
+    base.scrollback = Math.round(Math.min(SCROLLBACK_MAX, Math.max(SCROLLBACK_MIN, input.scrollback)));
+  }
   if (typeof input.editorCommand === 'string' && editorArgv(input.editorCommand, '.')) {
     base.editorCommand = input.editorCommand.trim();
   }
   return base;
+}
+
+/**
+ * Familias de fonte digitadas pelo usuario. Vai direto para o xterm e o CSS:
+ * sem `;`, chaves nem controle (nao vira outra declaracao). Vazio = padrao.
+ */
+export function cleanFontFamily(raw: string): string {
+  const text = raw.trim().slice(0, MAX_FONT_FAMILY);
+  if (!text || /[;{}<>\\\x00-\x1f]/.test(text)) return DEFAULT_FONT_FAMILY;
+  return text;
 }
 
 /**

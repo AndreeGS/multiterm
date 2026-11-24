@@ -83,6 +83,12 @@ export interface MultiTermApi {
   ackOutput(id: string, bytes: number): void;
   /** Abre um link no navegador do sistema (so http, https e mailto). */
   openExternal(url: string): void;
+  /** Guarda o historico serializado do terminal (para restaurar a sessao depois). */
+  saveScrollback(id: string, text: string): void;
+  /** Historico salvo de um terminal recem-restaurado; `null` = nenhum (ou ja entregue). */
+  takeScrollback(id: string): Promise<string | null>;
+  /** Caminho no disco de um arquivo arrastado para a janela (`''` = nao e um arquivo local). */
+  pathForFile(file: File): string;
   /**
    * A fila de tarefas tem um proximo prompt para o agente deste terminal:
    * o fim da volta dele nao vira aviso, porque a fila responde.
@@ -235,6 +241,8 @@ export const CHANNELS = {
   interrupt: 'terminal:interrupt',
   setQueued: 'terminal:set-queued',
   answerPermission: 'terminal:answer-permission',
+  saveScrollback: 'terminal:save-scrollback',
+  takeScrollback: 'terminal:take-scrollback',
   openExternal: 'app:open-external',
   ackOutput: 'terminal:ack-output',
   busyProgram: 'terminal:busy-program',

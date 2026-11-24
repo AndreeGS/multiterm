@@ -55,6 +55,7 @@ import { JsonNotesStore } from '../infrastructure/persistence/json-notes-store.j
 import { JsonTextsStore } from '../infrastructure/persistence/json-texts-store.js';
 import { JsonFramesStore } from '../infrastructure/persistence/json-frames-store.js';
 import { JsonTasksStore } from '../infrastructure/persistence/json-tasks-store.js';
+import { ScrollbackStore } from '../infrastructure/persistence/scrollback-store.js';
 import { GitCli } from '../infrastructure/git/git-cli.js';
 import { startClaudeHooks, type ClaudeHooks } from '../infrastructure/agent/claude-hooks.js';
 import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
@@ -74,6 +75,14 @@ let texts: TextsService;
 let frames: FramesService;
 let tasks: TasksService;
 let hooks: ClaudeHooks | null = null;
+let scrollback: ScrollbackStore;
+/**
+ * Terminais restaurados cujo historico salvo ainda nao foi pedido pelo
+ * renderer. Entregue uma vez: depois o buffer vivo ja o contem.
+ */
+const historyToRestore = new Set<string>();
+/** Historico serializado mandado pelo renderer, no maximo (em caracteres). */
+const MAX_HISTORY_CHARS = 4 * 1024 * 1024;
 /** De quanto em quanto tempo o programa em foreground de cada terminal e conferido. */
 const FOREGROUND_POLL_MS = 1500;
 let foregroundTimer: NodeJS.Timeout | null = null;
@@ -290,6 +299,8 @@ function restoreSession(): RestoredSession {
         workspaceId: entry.workspaceId,
       }, undefined, entry.id);
       restored.terminals.push(snapshot);
+      // Mesmo id de antes: o historico salvo dele e deste terminal.
+      if (snapshot.id === entry.id) historyToRestore.add(snapshot.id);
       if (entry.rect) {
         terminalRects.set(snapshot.id, entry.rect);
         restored.terminalRects[snapshot.id] = entry.rect;
@@ -344,8 +355,20 @@ function registerIpc(): void {
 
   handle(CHANNELS.sessionRestore, () => restoreSession());
   handle(CHANNELS.sessionDiscard, () => {
+    for (const entry of pendingSession) if (entry.id) scrollback.remove(entry.id);
     pendingSession = [];
     persistTerminals();
+  });
+  on(CHANNELS.saveScrollback, (_event, id: unknown, text: unknown) => {
+    // So de terminal aberto: um save atrasado nao recria o arquivo de um
+    // fechado. Saindo do app, as sessoes ja foram encerradas quando a janela
+    // manda o ultimo historico; ai vale (os fechados ja nao tem painel).
+    if (typeof id !== 'string' || typeof text !== 'string' || text.length > MAX_HISTORY_CHARS) return;
+    if (terminals.snapshot(id) || shutDown) scrollback.save(id, text);
+  });
+  handle(CHANNELS.takeScrollback, (_event, id: unknown) => {
+    if (typeof id !== 'string' || !historyToRestore.delete(id)) return null;
+    return scrollback.load(id);
   });
 
   handle(CHANNELS.pickDirectory, async (_event, startIn?: string) => {
@@ -407,6 +430,7 @@ function registerIpc(): void {
     for (const snapshot of terminals.list()) {
       if (snapshot.workspaceId === id) terminals.close(snapshot.id);
     }
+    for (const entry of pendingSession) if (entry.workspaceId === id && entry.id) scrollback.remove(entry.id);
     pendingSession = pendingSession.filter((entry) => entry.workspaceId !== id);
     notes.removeWorkspace(id);
     tasks.removeWorkspace(id);
@@ -722,6 +746,9 @@ if (!app.requestSingleInstanceLock()) {
         persistTerminals();
       },
       onClose: (id) => {
+        // Fechar e de vez: o historico vai junto (sair do app nao passa por aqui).
+        scrollback.remove(id);
+        historyToRestore.delete(id);
         // O ultimo lote sai antes de esquecer o controle de fluxo: entregar
         // depois recriaria a contagem (e ate uma pausa) de um terminal morto.
         output.flush();
@@ -742,6 +769,9 @@ if (!app.requestSingleInstanceLock()) {
     usage = new UsageService(undefined, (summary) => send(CHANNELS.usageUpdate, summary));
 
     pendingSession = workspace.current().terminals;
+    scrollback = new ScrollbackStore(app.getPath('userData'));
+    // So sobrevive o historico de quem ainda pode ser restaurado.
+    scrollback.prune(new Set(pendingSession.flatMap((entry) => (entry.id ? [entry.id] : []))));
     adoptOrphans();
     const permitted = (permission: string) => ALLOWED_PERMISSIONS.has(permission);
     session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => callback(permitted(permission)));
