@@ -82,6 +82,11 @@ export interface MultiTermApi {
   ackOutput(id: string, bytes: number): void;
   /** Abre um link no navegador do sistema (so http, https e mailto). */
   openExternal(url: string): void;
+  /**
+   * A fila de tarefas tem um proximo prompt para o agente deste terminal:
+   * o fim da volta dele nao vira aviso, porque a fila responde.
+   */
+  setTerminalQueued(id: string, queued: boolean): void;
   /** Marca que voce ja viu este terminal (limpa o pedido de atencao). */
   acknowledgeTerminal(id: string): void;
   writeTerminal(id: string, data: string): void;
@@ -225,6 +230,7 @@ export const CHANNELS = {
   setColor: 'terminal:set-color',
   moveTerminal: 'terminal:move-workspace',
   interrupt: 'terminal:interrupt',
+  setQueued: 'terminal:set-queued',
   openExternal: 'app:open-external',
   ackOutput: 'terminal:ack-output',
   busyProgram: 'terminal:busy-program',

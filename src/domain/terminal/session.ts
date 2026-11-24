@@ -2,11 +2,13 @@ import { basename } from 'node:path';
 import { parseWorktreeInfo, type WorktreeInfo } from '../git/worktree.js';
 import { parsePaneColor, type PaneColor } from '../workspace/colors.js';
 import { parseWorkspaceId } from '../workspace/workspace.js';
-import { claudeLaunchCommand, cleanCommand, parseSessionId, sessionIdOf, wantsOwnSession } from './command.js';
+import { PERMISSION_NOTICE, type AgentEvent, type AgentState } from './agent.js';
+import { claudeLaunchCommand, cleanCommand, parseSessionId, sessionIdOf, wantsOwnSession, withHookSettings } from './command.js';
 import type { Pty, PtyFactory } from './pty.js';
 import { SignalScanner } from './signals.js';
 import type { ReplaySnapshot, TerminalSize, TerminalSnapshot, TerminalSpec, TerminalStatus } from './types.js';
 import { busyProgram } from './foreground.js';
+import { shellIntegrationEnv, type CommandResult, type ShellMark } from './shell-integration.js';
 
 export interface SessionEvents {
   /** `seq` cresce a cada chunk, inclusive entre restarts. */
@@ -16,6 +18,16 @@ export interface SessionEvents {
 
 /** Porta: a conversa do Claude com este id ja foi gravada em disco? */
 export type TranscriptCheck = (sessionId: string) => boolean;
+
+/**
+ * Ligacao do terminal com os hooks do Claude Code: o argumento de
+ * `--settings` (ja com aspas de shell) e as variaveis que o script de hook
+ * le para achar o app e se identificar.
+ */
+export interface HookBinding {
+  readonly settingsArg: string;
+  readonly env: Readonly<Record<string, string>>;
+}
 
 const DEFAULT_SIZE: TerminalSize = { cols: 80, rows: 24 };
 /** Silencio apos o qual um terminal "running" passa a "idle". */
@@ -36,7 +48,8 @@ export class TerminalSession {
   private shell: string;
   private command: string;
   private color: PaneColor | null;
-  private readonly claudeSession: string | null;
+  /** Segue a conversa em uso: `/clear` e `/resume` trocam, e os hooks avisam. */
+  private claudeSession: string | null;
   private readonly worktree: WorktreeInfo | null;
   private workspaceId: string;
   /** O que de fato e digitado no shell (o comando com a conversa escolhida). */
@@ -60,6 +73,19 @@ export class TerminalSession {
   private scanner = new SignalScanner();
   /** O comando inicial espera o shell imprimir algo (o prompt) antes de ser digitado. */
   private commandPending = false;
+  private attentionSince: number | null = null;
+  private agent: AgentState | null = null;
+  /**
+   * Ha um proximo prompt esperando este agente terminar a volta (fila de
+   * tarefas): o Stop nao vira pedido de atencao, a fila responde por voce.
+   */
+  private queued = false;
+  /** O ultimo Stop nao avisou porque a fila ia responder; se ela desistir, avisa. */
+  private stopSilenced = false;
+  private foreground: string | null = null;
+  private lastCommand: CommandResult | null = null;
+  /** Inicio do comando rodando agora (marca C do OSC 133); `null` = nenhum. */
+  private commandStartedAt: number | null = null;
 
   constructor(
     id: string,
@@ -67,6 +93,7 @@ export class TerminalSession {
     private readonly ptys: PtyFactory,
     private readonly events: SessionEvents,
     private readonly hasTranscript: TranscriptCheck = () => false,
+    private readonly hooks: HookBinding | null = null,
   ) {
     this.id = id;
     this.cwd = spec.cwd;
@@ -97,8 +124,12 @@ export class TerminalSession {
       status: this.status,
       exitCode: this.exitCode,
       createdAt: this.createdAt,
-      needsAttention: this.attention || this.notice !== null,
+      needsAttention: this.needsAttention(),
       notice: this.notice,
+      attentionSince: this.attentionSince,
+      agent: this.agent,
+      foreground: this.foreground,
+      lastCommand: this.lastCommand,
     };
   }
 
@@ -117,6 +148,11 @@ export class TerminalSession {
 
     this.exitCode = null;
     this.scanner = new SignalScanner();
+    this.agent = null;
+    this.queued = false;
+    this.foreground = null;
+    this.lastCommand = null;
+    this.commandStartedAt = null;
     this.launch = this.launchCommand();
     this.commandPending = this.launch.length > 0;
     this.setStatus('starting');
@@ -125,7 +161,7 @@ export class TerminalSession {
       this.pty = this.ptys.spawn({
         shell: this.shell,
         cwd: this.cwd,
-        env: buildEnv(),
+        env: { ...buildEnv(), ...shellIntegrationEnv(this.shell, process.env), ...this.hooks?.env },
         size: this.size,
       });
     } catch (error) {
@@ -145,6 +181,7 @@ export class TerminalSession {
       const signal = this.scanner.scan(chunk);
       this.markActive();
       if (signal) this.raiseNotice(signal);
+      for (const mark of this.scanner.takeMarks()) this.onShellMark(mark);
       if (this.commandPending) {
         // O rc do shell ja rodou e o prompt apareceu: agora o comando entra
         // como se voce tivesse digitado. Nao arma o aviso de ocioso — um
@@ -169,6 +206,8 @@ export class TerminalSession {
         return;
       }
       this.exitCode = code;
+      this.agent = null;
+      this.foreground = null;
       this.setStatus(code === 0 ? 'exited' : 'error');
     });
   }
@@ -178,8 +217,13 @@ export class TerminalSession {
     // Sem isto, o prompt do shell de um terminal recem-criado ja dispararia o
     // aviso, e varias abas novas apareceriam como "aguardando" sem motivo.
     this.armed = true;
+    // Alguem (voce, ou a fila) ja respondeu ao agente parado.
+    this.stopSilenced = false;
+    const phase = this.agent && agentPhaseAfterInput(this.agent.phase, data);
+    const changed = phase !== null && phase !== this.agent?.phase;
+    if (changed) this.agent = { ...this.agent!, phase };
     // Digitar e responder: o pedido explicito ja foi atendido.
-    if (this.notice !== null) {
+    if (this.notice !== null || changed) {
       this.notice = null;
       this.emitUpdate();
     }
@@ -213,7 +257,70 @@ export class TerminalSession {
 
   /** Interrompe o processo em foreground sem matar a sessao (Ctrl-C). */
   interrupt(): void {
-    this.pty?.write('\x03');
+    if (this.pty) this.write('\x03');
+  }
+
+  /**
+   * Evento de hook do Claude Code deste terminal. Com o agente conhecido, e
+   * ele quem diz quando a volta terminou: o silencio do pty deixa de contar.
+   */
+  agentEvent(event: AgentEvent): void {
+    if (!this.pty) return;
+    if (event.sessionId && event.sessionId !== this.claudeSession) this.claudeSession = event.sessionId;
+    const agent = this.agent ?? { phase: 'waiting' as const, turns: 0 };
+    switch (event.kind) {
+      case 'start':
+        // Tambem chega no `/clear`, no `/resume` e ao compactar: so muda a conversa.
+        this.agent = agent;
+        break;
+      case 'prompt':
+        this.agent = { ...agent, phase: 'working' };
+        this.stopSilenced = false;
+        this.armed = true;
+        this.attention = false;
+        this.notice = null;
+        break;
+      case 'stop':
+        this.agent = { phase: 'waiting', turns: agent.turns + 1 };
+        this.attention = !this.queued;
+        this.stopSilenced = this.queued;
+        // Um pedido de permissao ainda aberto foi respondido: a volta terminou.
+        this.notice = null;
+        break;
+      case 'permission':
+        this.agent = { ...agent, phase: 'permission' };
+        this.notice = event.message ?? PERMISSION_NOTICE;
+        break;
+      case 'end':
+        this.agent = null;
+        break;
+    }
+    this.emitUpdate();
+  }
+
+  /** A fila de tarefas tem (ou deixou de ter) um proximo prompt para este agente. */
+  setQueued(queued: boolean): void {
+    this.queued = queued;
+    // A fila parou sem mandar o proximo (desligada, lista apagada): o agente
+    // esta parado esperando voce, e ninguem avisou.
+    if (queued || !this.stopSilenced || this.agent?.phase !== 'waiting') return;
+    this.stopSilenced = false;
+    this.attention = true;
+    this.emitUpdate();
+  }
+
+  /**
+   * Confere o programa em foreground (o main chama de tempos em tempos). O
+   * agente que sumiu sem SessionEnd (caiu, `kill`) deixa de ser acompanhado.
+   */
+  refreshForeground(): void {
+    if (!this.pty) return;
+    const program = this.busyProgram();
+    const agentGone = this.agent !== null && program === null;
+    if (program === this.foreground && !agentGone) return;
+    this.foreground = program;
+    if (agentGone) this.agent = null;
+    this.emitUpdate();
   }
 
   rename(name: string): void {
@@ -240,6 +347,7 @@ export class TerminalSession {
     if (cwd) this.cwd = cwd;
     this.armed = false;
     this.notice = null;
+    this.attention = false;
     if (!this.pty) {
       this.replay = [];
       this.replayBytes = 0;
@@ -268,8 +376,30 @@ export class TerminalSession {
 
   /** Decidido a cada start: depois que a conversa existe, reiniciar a retoma. */
   private launchCommand(): string {
-    if (!this.claudeSession || !wantsOwnSession(this.command)) return this.command;
-    return claudeLaunchCommand(this.command, this.claudeSession, this.hasTranscript(this.claudeSession));
+    const command = this.claudeSession && wantsOwnSession(this.command)
+      ? claudeLaunchCommand(this.command, this.claudeSession, this.hasTranscript(this.claudeSession))
+      : this.command;
+    return this.hooks ? withHookSettings(command, this.hooks.settingsArg) : command;
+  }
+
+  private onShellMark(mark: ShellMark): void {
+    if (mark.kind === 'command-start') {
+      this.commandStartedAt = Date.now();
+      if (this.lastCommand === null) return;
+      this.lastCommand = null;
+      this.emitUpdate();
+    } else if (mark.kind === 'command-end') {
+      // D sem C: Enter num prompt vazio, Ctrl+C no prompt, o primeiro prompt.
+      if (this.commandStartedAt === null) return;
+      const now = Date.now();
+      this.lastCommand = { exitCode: mark.exitCode, durationMs: now - this.commandStartedAt, endedAt: now };
+      this.commandStartedAt = null;
+      this.emitUpdate();
+    }
+  }
+
+  private needsAttention(): boolean {
+    return this.attention || this.notice !== null;
   }
 
   private markActive(): void {
@@ -287,11 +417,13 @@ export class TerminalSession {
     const previous = this.status;
     this.status = status;
 
+    // Com o agente conhecido pelos hooks, quem liga e desliga o aviso sao os
+    // eventos dele: a TUI redesenha e silencia no meio do trabalho.
     if (status === 'running') {
       // Voltou a trabalhar: o pedido de atencao anterior ficou obsoleto.
-      this.attention = false;
+      if (!this.agent) this.attention = false;
     } else if (status === 'idle' && previous === 'running') {
-      this.attention = this.armed;
+      if (!this.agent) this.attention = this.armed;
     } else if (status === 'exited' || status === 'error') {
       // Um processo que morre sozinho importa mesmo sem voce ter digitado nada.
       this.attention = true;
@@ -319,6 +451,9 @@ export class TerminalSession {
 
   private emitUpdate(): void {
     if (this.disposed) return;
+    const needs = this.needsAttention();
+    if (!needs) this.attentionSince = null;
+    else this.attentionSince ??= Date.now();
     this.events.onUpdate(this.snapshot());
   }
 
@@ -351,6 +486,9 @@ export function buildEnv(base: NodeJS.ProcessEnv = process.env, platform: NodeJS
   // Variaveis injetadas pelo Electron que confundem processos filhos.
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.ELECTRON_NO_ATTACH_CONSOLE;
+  // Herdado de quem abriu o app (gnome-terminal...): o rc do VTE trocaria o
+  // PROMPT_COMMAND pelo dele, e nao somos o VTE.
+  delete env.VTE_VERSION;
   // Aberto por `npm start`, o app herda o ambiente do npm; o nvm, por exemplo,
   // reclama de `npm_config_prefix` em todo shell novo.
   for (const key of Object.keys(env)) {
@@ -361,6 +499,18 @@ export function buildEnv(base: NodeJS.ProcessEnv = process.env, platform: NodeJS
   // tem C.UTF-8; no Linux ele existe sempre (en_US pode nao estar gerado).
   if (!env.LANG && !env.LC_ALL && !env.LC_CTYPE) env.LANG = platform === 'darwin' ? 'en_US.UTF-8' : 'C.UTF-8';
   return env;
+}
+
+/**
+ * O que uma tecla faz com o agente: responder ao pedido de permissao o poe
+ * para trabalhar de novo (Esc recusa e ele para); Esc ou Ctrl+C no meio da
+ * volta interrompe, e ai nenhum Stop vem. `null` = nao muda.
+ */
+export function agentPhaseAfterInput(phase: AgentState['phase'], data: string): AgentState['phase'] | null {
+  const interrupt = data === '\x1b' || data === '\x03';
+  if (phase === 'permission') return interrupt ? 'waiting' : 'working';
+  if (phase === 'working' && interrupt) return 'waiting';
+  return null;
 }
 
 function errorMessage(error: unknown): string {

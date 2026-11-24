@@ -1063,6 +1063,28 @@ button.swatch.selected:hover:not(:disabled) { border-color: var(--fg); }
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- selos do cabecalho: espera, ultimo comando, foreground ---------- */
+.pane-meta {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.pane-meta > span { overflow: hidden; text-overflow: ellipsis; }
+.pane-meta-waiting { color: var(--idle); }
+.pane-meta-ok { color: var(--running); }
+.pane-meta-failed { color: var(--error); }
+
+/* ---------- fila de tarefas ---------- */
+.pane-actions .queue-btn.active { color: var(--running); border-color: var(--running); }
+.pane-actions .queue-btn:disabled { opacity: 0.35; }
+.tasks-item.in-flight .tasks-sent { color: var(--running); }
+
 /* ---------- worktree ---------- */
 .worktree-row { display: flex; flex-direction: column; gap: 6px; }
 .modal .worktree-row input[type="text"]:disabled { opacity: 0.45; }

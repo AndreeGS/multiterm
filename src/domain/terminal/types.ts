@@ -1,5 +1,7 @@
 import type { WorktreeInfo } from '../git/worktree.js';
 import type { PaneColor } from '../workspace/colors.js';
+import type { AgentState } from './agent.js';
+import type { CommandResult } from './shell-integration.js';
 
 /**
  * Estado de atividade de um terminal.
@@ -64,6 +66,17 @@ export interface TerminalSnapshot {
    * olha ou digita, nao quando o agente volta a imprimir.
    */
   readonly notice: string | null;
+  /** Desde quando `needsAttention` esta ligado; `null` = nao esta. */
+  readonly attentionSince: number | null;
+  /**
+   * Estado do Claude Code aberto pelo app neste terminal, pelos hooks dele.
+   * `null` = nenhum agente com hooks (vale so a heuristica do fluxo de bytes).
+   */
+  readonly agent: AgentState | null;
+  /** Programa em foreground alem do shell (`vim`, `npm`...); `null` = so o shell. */
+  readonly foreground: string | null;
+  /** Ultimo comando terminado (marcas OSC 133 do shell); `null` = nenhum, ou um rodando agora. */
+  readonly lastCommand: CommandResult | null;
 }
 
 /**

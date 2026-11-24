@@ -4,8 +4,10 @@ import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type IMarker } from '@xterm/xterm';
 import { describeStatus, formatStatus, type WorktreeStatus } from '../../domain/git/worktree.js';
+import type { AgentPhase } from '../../domain/terminal/agent.js';
+import { formatDuration, formatWaiting } from '../../domain/terminal/shell-integration.js';
 import type { TerminalSnapshot } from '../../domain/terminal/types.js';
 import { totalTokens, type UsageTotals } from '../../domain/usage/types.js';
 import type { CanvasRect } from '../../domain/workspace/layout.js';
@@ -28,6 +30,24 @@ export const STATUS_LABEL: Record<TerminalSnapshot['status'], string> = {
   error: 'erro',
 };
 
+/** O que o Claude Code esta fazendo, pelos hooks dele. */
+export const AGENT_LABEL: Record<AgentPhase, string> = {
+  working: 'Claude trabalhando',
+  waiting: 'Claude aguardando voce',
+  permission: 'Claude pedindo permissao',
+};
+
+/** Com o agente conhecido, o ponto mostra o estado dele em vez do fluxo de bytes. */
+const AGENT_DOT: Record<AgentPhase, TerminalSnapshot['status']> = {
+  working: 'running',
+  waiting: 'idle',
+  permission: 'idle',
+};
+
+/** Comandos mais curtos que isto nao ganham o selo de resultado: voce estava olhando. */
+const COMMAND_BADGE_MIN_MS = 3000;
+/** Marcas de prompt guardadas por terminal (as mais antigas saem com o scrollback). */
+const MAX_PROMPT_MARKS = 2000;
 /**
  * Terminais com renderizador WebGL ao mesmo tempo. O Chromium derruba o
  * contexto mais antigo acima de ~16; o resto usa o renderizador DOM. Os slots
@@ -83,6 +103,10 @@ export class TerminalPane implements Panel {
   private readonly maximizeBtn: HTMLButtonElement;
   private readonly colorBtn: HTMLButtonElement;
   private readonly usageEl: HTMLElement;
+  /** `✓ 12s` do ultimo comando, `ha 5 min` esperando, `▸ vim` em foreground. */
+  private readonly metaEl: HTMLElement;
+  /** Inicio de cada prompt no buffer (OSC 133 A), para Ctrl+Shift+↑/↓. */
+  private readonly prompts: IMarker[] = [];
   private usage: UsageTotals | null = null;
   private readonly gitEl: HTMLButtonElement;
   private gitRequestedAt = 0;
@@ -156,11 +180,13 @@ export class TerminalPane implements Panel {
 
     this.usageEl = el('span', 'pane-usage');
     this.usageEl.hidden = true;
+    this.metaEl = el('span', 'pane-meta');
+    this.metaEl.hidden = true;
     this.gitEl = button('', 'Ver diff do worktree', () => this.callbacks.onShowDiff(this.id));
     this.gitEl.className = 'pane-git';
     this.gitEl.hidden = true;
 
-    header.append(this.dot, title, this.gitEl, this.usageEl, actions);
+    header.append(this.dot, title, this.metaEl, this.gitEl, this.usageEl, actions);
 
     const body = el('div', 'pane-body');
     this.searchInput = el('input', 'search-input');
@@ -220,6 +246,12 @@ export class TerminalPane implements Panel {
       readText: () => '',
       writeText: (_selection, text) => navigator.clipboard.writeText(text),
     }));
+    // Marcas de prompt do shell: guarda onde cada prompt comecou para pular
+    // entre eles. Nao consome a sequencia (o xterm a ignora de qualquer jeito).
+    this.term.parser.registerOscHandler(133, (data) => {
+      if (data === 'A' || data.startsWith('A;')) this.markPrompt();
+      return false;
+    });
     this.term.open(body);
     // Pega (ou devolve) um slot de WebGL conforme o painel entra ou sai da tela.
     this.visibility = new IntersectionObserver((entries) => {
@@ -266,14 +298,80 @@ export class TerminalPane implements Panel {
     this.cwdEl.title = `${snapshot.cwd}  (${snapshot.shell})` +
       (snapshot.worktree ? `\nWorktree da branch ${snapshot.worktree.branch}, de ${snapshot.worktree.repo}` : '') +
       (snapshot.command ? `\nComando inicial: ${snapshot.command}` : '');
-    this.dot.dataset.status = snapshot.status;
+    const agent = snapshot.agent;
+    this.dot.dataset.status = agent && snapshot.status !== 'exited' && snapshot.status !== 'error'
+      ? AGENT_DOT[agent.phase]
+      : snapshot.status;
     this.element.classList.toggle('attention', snapshot.needsAttention);
     this.element.classList.toggle('notice', snapshot.notice !== null);
     this.element.classList.toggle('colored', snapshot.color !== null);
     if (snapshot.color) this.element.style.setProperty('--pane-accent', paneColorVar(snapshot.color));
     else this.element.style.removeProperty('--pane-accent');
-    this.dot.title = STATUS_LABEL[snapshot.status] +
+    this.dot.title = (agent ? AGENT_LABEL[agent.phase] : STATUS_LABEL[snapshot.status]) +
       (snapshot.exitCode !== null ? ` (codigo ${snapshot.exitCode})` : '');
+    this.renderMeta();
+  }
+
+  /**
+   * Selos do cabecalho: ha quanto tempo espera voce, o resultado do ultimo
+   * comando demorado e o programa em foreground quando nao e o comando
+   * inicial. O App chama de tempos em tempos para o "ha X min" andar.
+   */
+  renderMeta(now = Date.now()): void {
+    const { attentionSince, lastCommand, foreground, command } = this.snapshot;
+    const parts: Array<[text: string, kind: string, title: string]> = [];
+    const waiting = attentionSince !== null ? formatWaiting(now - attentionSince) : null;
+    if (waiting) parts.push([waiting, 'waiting', `Aguardando desde ${new Date(attentionSince!).toLocaleTimeString()}`]);
+    if (lastCommand && lastCommand.durationMs >= COMMAND_BADGE_MIN_MS) {
+      const failed = lastCommand.exitCode !== null && lastCommand.exitCode !== 0;
+      const duration = formatDuration(lastCommand.durationMs);
+      parts.push([
+        failed ? `✗ ${lastCommand.exitCode} · ${duration}` : `✓ ${duration}`,
+        failed ? 'failed' : 'ok',
+        `Ultimo comando: ${lastCommand.exitCode === null ? 'terminou' : `codigo ${lastCommand.exitCode}`}, ` +
+          `levou ${duration}, as ${new Date(lastCommand.endedAt).toLocaleTimeString()}`,
+      ]);
+    }
+    const initial = command?.trim().split(/\s+/)[0]?.split('/').pop() ?? null;
+    if (foreground && foreground !== initial) parts.push([`▸ ${foreground}`, 'fg', `Rodando agora: ${foreground}`]);
+    this.metaEl.hidden = parts.length === 0;
+    this.metaEl.replaceChildren(...parts.map(([text, kind, title]) => {
+      const item = el('span', `pane-meta-${kind}`);
+      item.textContent = text;
+      item.title = title;
+      return item;
+    }));
+  }
+
+  private markPrompt(): void {
+    const marker = this.term.registerMarker(0);
+    if (!marker) return;
+    // Um prompt redesenhado na mesma linha (resize, Ctrl+L) nao vira outra marca.
+    const last = this.prompts[this.prompts.length - 1];
+    if (last && !last.isDisposed && last.line === marker.line) {
+      marker.dispose();
+      return;
+    }
+    marker.onDispose(() => {
+      const index = this.prompts.indexOf(marker);
+      if (index >= 0) this.prompts.splice(index, 1);
+    });
+    this.prompts.push(marker);
+    if (this.prompts.length > MAX_PROMPT_MARKS) this.prompts.shift()?.dispose();
+  }
+
+  /** Rola ate o prompt anterior/seguinte ao topo da tela (Ctrl+Shift+↑/↓). */
+  private jumpToPrompt(direction: -1 | 1): void {
+    const top = this.term.buffer.active.viewportY;
+    const lines = this.prompts.filter((marker) => !marker.isDisposed).map((marker) => marker.line);
+    const target = direction < 0
+      ? lines.filter((line) => line < top).pop()
+      : lines.find((line) => line > top);
+    if (target === undefined) {
+      if (direction > 0) this.term.scrollToBottom();
+      return;
+    }
+    this.term.scrollToLine(target);
   }
 
   get name(): string {
@@ -293,9 +391,9 @@ export class TerminalPane implements Panel {
    * vao como colagem (bracketed paste quando o programa pede, como o Claude
    * Code), para virarem um prompt so em vez de um Enter por linha.
    */
-  send(text: string): void {
+  send(text: string): Promise<void> {
     const body = text.replace(/\s+$/, '');
-    if (!body) return;
+    if (!body) return Promise.resolve();
     // Em fila: dois Ctrl+Enter seguidos nao podem intercalar texto e Enter.
     this.sending = this.sending.then(async () => {
       if (!body.includes('\n')) {
@@ -310,6 +408,7 @@ export class TerminalPane implements Panel {
     this.element.classList.remove('received');
     void this.element.offsetWidth; // reinicia a animacao
     this.element.classList.add('received');
+    return this.sending;
   }
 
   setMaximized(maximized: boolean): void {
@@ -636,6 +735,11 @@ export class TerminalPane implements Panel {
     // Atalho do app: o xterm nao repassa ao shell, e o App (no window) executa.
     if (matchShortcut(event, true)) return false;
     const mod = event.ctrlKey && event.shiftKey;
+    if (mod && !event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      event.preventDefault();
+      this.jumpToPrompt(event.key === 'ArrowUp' ? -1 : 1);
+      return false;
+    }
     if (mod && event.code === 'KeyF') {
       event.preventDefault();
       this.openSearch();

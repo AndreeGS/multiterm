@@ -12,6 +12,7 @@ function snapshot(id: string, status: TerminalStatus, worktree: WorktreeInfo | n
   return {
     id, name: id, cwd: worktree?.path ?? '/', shell: 'bash', command: null, color: null, claudeSession: null,
     worktree, workspaceId: 'w', status, exitCode: null, createdAt: 0, needsAttention: false, notice: null,
+    attentionSince: null, agent: null, foreground: null, lastCommand: null,
   };
 }
 

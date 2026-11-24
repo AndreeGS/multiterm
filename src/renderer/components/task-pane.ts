@@ -1,8 +1,9 @@
 import { cleanItemText, type TaskItem, type TaskList } from '../../domain/tasks/task-list.js';
 import type { CanvasRect } from '../../domain/workspace/layout.js';
+import type { AgentState } from '../../domain/terminal/agent.js';
 import type { MultiTermApi } from '../../shared/contract.js';
 import type { Appearance } from '../theme.js';
-import { openConfirm } from './dialogs.js';
+import { openAlert, openConfirm } from './dialogs.js';
 import {
   beginRename,
   button,
@@ -23,6 +24,23 @@ export interface TaskCallbacks extends LinkCallbacks {
    * Devolve o nome do terminal que recebeu, ou `null` se nao mandou.
    */
   onSend(sourceId: string, text: string, pick: boolean): Promise<string | null>;
+  /** Estado do Claude no terminal (pelos hooks); `null` = sem agente acompanhado. */
+  agentOf(terminalId: string): AgentState | null;
+  /** A fila desta lista tem (ou nao) um proximo prompt para `terminalId`; `null` = fila parada. */
+  onQueueChange(listId: string, terminalId: string | null, hasNext: boolean): void;
+}
+
+/**
+ * Fila: com ela ligada, a lista manda a primeira pendente ao agente vinculado
+ * e, a cada volta que ele termina (hook Stop), conclui a enviada e manda a
+ * seguinte. Para sozinha quando acabam as pendentes, quando o agente sai ou o
+ * vinculo muda. Vive so nesta sessao do app, como a marca de enviada.
+ */
+interface QueueState {
+  /** Tarefa mandada pela fila, esperando o agente terminar a volta. */
+  inFlight: string | null;
+  /** Voltas do agente ja vistas: so uma volta nova faz a fila andar. */
+  turns: number;
 }
 
 /**
@@ -57,6 +75,8 @@ export class TaskPane implements Panel {
   private refocusRow = false;
   private fontSize: number;
   private scale = 1;
+  private readonly queueBtn: HTMLButtonElement;
+  private queue: QueueState | null = null;
 
   constructor(
     list: TaskList,
@@ -86,8 +106,11 @@ export class TaskPane implements Panel {
 
     const actions = el('div', 'pane-actions');
     this.clearBtn = button('⌫', 'Apagar as tarefas concluidas', () => void this.clearDone());
+    this.queueBtn = button('⏵⏵', '', () => void this.toggleQueue());
+    this.queueBtn.classList.add('queue-btn');
     this.maximizeBtn = button('⤢', 'Maximizar / restaurar', () => this.callbacks.onMaximize(this.id));
     actions.append(
+      this.queueBtn,
       this.clearBtn,
       this.maximizeBtn,
       button('✕', 'Fechar e apagar lista', () => this.callbacks.onClose(this.id)),
@@ -188,7 +211,91 @@ export class TaskPane implements Panel {
   }
 
   dispose(): void {
+    this.stopQueue();
     this.element.remove();
+  }
+
+  get queueRunning(): boolean {
+    return this.queue !== null;
+  }
+
+  /** Liga ou desliga a fila (botao ⏵⏵ e paleta). */
+  async toggleQueue(): Promise<void> {
+    if (this.queue) {
+      this.stopQueue();
+      return;
+    }
+    const terminalId = this.list.terminalId;
+    const agent = terminalId && this.linkName ? this.callbacks.agentOf(terminalId) : null;
+    if (!terminalId || !agent) {
+      await openAlert(
+        'Fila de tarefas',
+        'A fila manda as tarefas uma a uma a um Claude Code aberto pelo MultiTerm, e anda quando ele termina cada volta.\n\n' +
+          'Vincule esta lista (🔗) a um terminal com o comando inicial "claude" e tente de novo.',
+      );
+      return;
+    }
+    if (!this.list.items.some((item) => !item.done)) return;
+    this.queue = { inFlight: null, turns: agent.turns };
+    if (agent.phase === 'waiting') await this.advanceQueue();
+    else this.syncQueue();
+    this.render();
+  }
+
+  /** Mudou o estado de um terminal; a fila so olha o vinculado. */
+  onTerminalState(terminalId: string, agent: AgentState | null): void {
+    if (!this.queue || terminalId !== this.list.terminalId) return;
+    if (!agent) {
+      this.stopQueue();
+      return;
+    }
+    if (agent.turns <= this.queue.turns) return;
+    this.queue.turns = agent.turns;
+    if (agent.phase === 'waiting') void this.advanceQueue();
+  }
+
+  /** Conclui a tarefa que estava com o agente e manda a proxima pendente. */
+  private async advanceQueue(): Promise<void> {
+    const queue = this.queue;
+    if (!queue) return;
+    if (queue.inFlight) {
+      const id = queue.inFlight;
+      queue.inFlight = null;
+      const now = Date.now();
+      this.commit(this.list.items.map((item) => (item.id === id && !item.done ? { ...item, done: true, doneAt: now } : item)));
+    }
+    const next = this.list.items.find((item) => !item.done);
+    if (!next) {
+      this.stopQueue();
+      return;
+    }
+    queue.inFlight = next.id;
+    this.render();
+    // Antes do texto chegar, o main nao pode achar que a fila desistiu.
+    const target = await this.callbacks.onSend(this.id, next.text, false);
+    if (this.queue !== queue) return;
+    if (!target) {
+      this.stopQueue();
+      return;
+    }
+    this.sent.set(next.id, target);
+    this.syncQueue();
+    this.render();
+  }
+
+  private stopQueue(): void {
+    if (!this.queue) return;
+    this.queue = null;
+    this.callbacks.onQueueChange(this.id, null, false);
+    this.render();
+  }
+
+  /** Avisa o main se ha uma proxima tarefa depois da que esta com o agente. */
+  private syncQueue(): void {
+    if (!this.queue || !this.list.terminalId) return;
+    const inFlight = this.queue.inFlight;
+    const hasNext = this.list.items.some((item) => !item.done && item.id !== inFlight);
+    this.callbacks.onQueueChange(this.id, this.list.terminalId, hasNext);
   }
 
   get workspaceId(): string {
@@ -208,6 +315,8 @@ export class TaskPane implements Panel {
   /** Troca o terminal vinculado e persiste. */
   setLink(terminalId: string | null): void {
     if (terminalId === this.list.terminalId) return;
+    // A fila era daquele agente: com outro vinculo, voce liga de novo.
+    this.stopQueue();
     this.list = { ...this.list, terminalId };
     this.api.updateTaskList(this.id, { terminalId });
   }
@@ -284,6 +393,12 @@ export class TaskPane implements Panel {
   private commit(items: TaskItem[]): void {
     this.list = { ...this.list, items };
     this.api.updateTaskList(this.id, { items });
+    if (this.queue) {
+      // A enviada foi apagada ou concluida a mao: a fila nao a conclui de novo.
+      const inFlight = this.queue.inFlight;
+      if (inFlight && !items.some((item) => item.id === inFlight && !item.done)) this.queue.inFlight = null;
+      this.syncQueue();
+    }
     this.render();
   }
 
@@ -296,7 +411,13 @@ export class TaskPane implements Panel {
     this.nameEl.textContent = this.list.title;
     this.infoEl.textContent = total === 0
       ? 'tarefas · vazia'
-      : `tarefas · ${done.length}/${total} concluidas`;
+      : `tarefas · ${done.length}/${total} concluidas` + (this.queue ? ' · ⏵⏵ fila ligada' : '');
+    this.queueBtn.classList.toggle('active', this.queue !== null);
+    this.queueBtn.disabled = !this.queue && pending.length === 0;
+    this.queueBtn.title = this.queue
+      ? 'Parar a fila (a tarefa ja enviada continua com o agente)'
+      : `Fila: mandar as pendentes uma a uma${this.linkName ? ` para ${this.linkName}` : ''}, ` +
+        'a seguinte quando o Claude terminar a anterior';
     const fill = this.progress.firstElementChild as HTMLElement;
     fill.style.width = total === 0 ? '0' : `${(done.length / total) * 100}%`;
     this.progress.hidden = total === 0;
@@ -409,10 +530,14 @@ export class TaskPane implements Panel {
 
     const target = this.sent.get(item.id);
     if (target && !item.done) {
+      const inFlight = this.queue?.inFlight === item.id;
       row.classList.add('sent');
+      row.classList.toggle('in-flight', inFlight);
       const badge = el('span', 'tasks-sent');
-      badge.textContent = `→ ${target}`;
-      badge.title = `Enviada para ${target}`;
+      badge.textContent = `${inFlight ? '⏵ ' : '→ '}${target}`;
+      badge.title = inFlight
+        ? `Com ${target}: a fila conclui esta tarefa quando ele terminar a volta`
+        : `Enviada para ${target}`;
       row.append(check, text, badge);
     } else {
       row.append(check, text);

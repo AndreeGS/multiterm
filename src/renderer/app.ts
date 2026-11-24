@@ -23,7 +23,7 @@ import { openDiffDialog } from './components/diff-dialog.js';
 import { isModalOpen } from './components/modal.js';
 import type { Board, LinkLabel, Panel } from './components/panel.js';
 import { TaskPane } from './components/task-pane.js';
-import { STATUS_LABEL, terminalPlace, TerminalPane } from './components/terminal-pane.js';
+import { AGENT_LABEL, STATUS_LABEL, terminalPlace, TerminalPane } from './components/terminal-pane.js';
 import { Toolbar } from './components/toolbar.js';
 import { setHomeDir, shortenPath } from './paths.js';
 import { matchShortcut, type Shortcut } from './shortcuts.js';
@@ -55,6 +55,8 @@ export class App {
   private defaultDir = '';
   private focusedId: string | null = null;
   private readonly attention = new Set<string>();
+  /** Listas com a fila ligada -> terminal que ainda tem um proximo prompt delas. */
+  private readonly queues = new Map<string, string>();
   private dialogOpen = false;
   private settings: Settings = defaultSettings();
 
@@ -207,7 +209,13 @@ export class App {
       const pane = this.panes.get(snapshot.id);
       const renamed = pane instanceof TerminalPane && pane.name !== snapshot.name;
       const moved = pane instanceof TerminalPane && pane.workspaceId !== snapshot.workspaceId;
+      const conversation = pane instanceof TerminalPane && pane.info.claudeSession !== snapshot.claudeSession;
       if (pane instanceof TerminalPane) pane.update(snapshot);
+      // `/clear` ou `/resume` no Claude: o consumo passa a ser o da conversa nova.
+      if (conversation) this.applyUsage(pane);
+      for (const source of this.linkSources()) {
+        if (source instanceof TaskPane) source.onTerminalState(snapshot.id, snapshot.agent);
+      }
       this.trackAttention(snapshot);
       // A linha do vinculo pinta o estado do terminal (aguardando/pedido).
       this.links.invalidate();
@@ -244,6 +252,11 @@ export class App {
       if (event.key === 'Alt') hideIndexes();
     });
     window.addEventListener('blur', hideIndexes);
+    // "ha 5 min" esperando: anda sozinho, sem update do main.
+    setInterval(() => {
+      const now = Date.now();
+      for (const pane of this.terminalPanes(true)) pane.renderMeta(now);
+    }, 30_000);
   }
 
   private runShortcut(shortcut: Shortcut): void {
@@ -500,6 +513,10 @@ export class App {
     if (focusedPane instanceof NotePane || focusedPane instanceof TaskPane) {
       items.push({ label: `Vincular "${paneLabel(focusedPane)}" a um terminal`, run: () => void this.pickLink(focusedPane.id) });
     }
+    if (focusedPane instanceof TaskPane) {
+      const label = focusedPane.queueRunning ? 'Parar a fila' : 'Ligar a fila';
+      items.push({ label: `${label} de "${paneLabel(focusedPane)}"`, run: () => void focusedPane.toggleQueue() });
+    }
     if (this.pendingTerminals.length > 0) {
       items.push({ label: `Restaurar sessao anterior (${this.pendingTerminals.length})`, run: () => void this.restoreSession() });
     }
@@ -547,8 +564,20 @@ export class App {
       if (!target) return null;
       this.setLink(source.id, target.id);
     }
-    target.send(text);
+    // So devolve depois do texto sair: a fila avisa o main logo em seguida.
+    await target.send(text);
     return target.name;
+  }
+
+  /** Junta as filas de todas as listas: o terminal tem proximo prompt se alguma tiver. */
+  private setQueue(listId: string, terminalId: string | null, hasNext: boolean): void {
+    const before = this.queues.get(listId) ?? null;
+    if (terminalId && hasNext) this.queues.set(listId, terminalId);
+    else this.queues.delete(listId);
+    for (const id of new Set([before, terminalId])) {
+      if (!id) continue;
+      this.api.setTerminalQueued(id, [...this.queues.values()].includes(id));
+    }
   }
 
   /** Clique no 🔗 (ou paleta): escolher o terminal, ou remover o vinculo. */
@@ -1020,6 +1049,12 @@ export class App {
       onLinkGesture: (sourceId: string, event: MouseEvent) => this.beginLinkGesture(sourceId, event),
       onLinkPick: (sourceId: string) => void this.pickLink(sourceId),
       onShowDiff: (id: string) => void this.showDiff(id),
+      agentOf: (terminalId: string) => {
+        const pane = this.panes.get(terminalId);
+        return pane instanceof TerminalPane ? pane.info.agent : null;
+      },
+      onQueueChange: (listId: string, terminalId: string | null, hasNext: boolean) =>
+        this.setQueue(listId, terminalId, hasNext),
       onOpenEditor: (id: string) => void this.openInEditor(id),
     };
   }
@@ -1176,6 +1211,7 @@ const SHORTCUTS_HELP = [
   'No terminal:',
   'Ctrl+Shift+C / V — copiar / colar',
   'Ctrl+Shift+F — buscar no scrollback',
+  'Ctrl+Shift+↑ / ↓ — prompt anterior / seguinte (shell com marcas OSC 133)',
   'Botao direito — menu do terminal',
   '',
   'Na lista de tarefas:',
@@ -1187,10 +1223,10 @@ const SHORTCUTS_HELP = [
 
 function paneDetail(pane: Panel): string {
   if (pane instanceof TerminalPane) {
-    const { notice, status, exitCode } = pane.info;
+    const { notice, status, exitCode, agent } = pane.info;
     if (notice) return `🔔 ${notice}`;
     const usage = pane.usageText;
-    const state = STATUS_LABEL[status] + (exitCode !== null ? ` (${exitCode})` : '');
+    const state = (agent ? AGENT_LABEL[agent.phase] : STATUS_LABEL[status]) + (exitCode !== null ? ` (${exitCode})` : '');
     return `terminal · ${state} · ${terminalPlace(pane.info)}${usage ? ` · ${usage}` : ''}`;
   }
   if (pane instanceof NotePane) return 'nota';

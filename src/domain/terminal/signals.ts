@@ -1,3 +1,5 @@
+import { parseShellMark, type ShellMark } from './shell-integration.js';
+
 /**
  * Detecta pedidos explicitos de atencao no fluxo de bytes do pty:
  *
@@ -15,6 +17,16 @@ export class SignalScanner {
   /** Fora de escape, logo apos ESC, dentro de um OSC, ou ESC dentro do OSC. */
   private state: 'text' | 'esc' | 'osc' | 'osc-esc' = 'text';
   private osc = '';
+  /** Marcas de prompt (OSC 133) achadas desde o ultimo `takeMarks()`, em ordem. */
+  private marks: ShellMark[] = [];
+
+  /** Devolve e esquece as marcas de prompt vistas nos ultimos `scan()`. */
+  takeMarks(): ShellMark[] {
+    if (this.marks.length === 0) return NO_MARKS;
+    const marks = this.marks;
+    this.marks = [];
+    return marks;
+  }
 
   /** Devolve o sinal mais relevante do chunk: mensagem > BEL > nada. */
   scan(chunk: string): string | null {
@@ -55,11 +67,18 @@ export class SignalScanner {
 
   private finishOsc(): string | null {
     this.state = 'text';
-    const message = notificationText(this.osc);
+    const osc = this.osc;
     this.osc = '';
-    return message;
+    if (osc.startsWith('133;')) {
+      const mark = parseShellMark(osc.slice(4));
+      if (mark) this.marks.push(mark);
+      return null;
+    }
+    return notificationText(osc);
   }
 }
+
+const NO_MARKS: ShellMark[] = [];
 
 /** Texto usado quando o sinal e um BEL, sem mensagem. */
 export const BELL = 'pediu sua atencao';
