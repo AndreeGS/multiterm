@@ -55,6 +55,7 @@ import { JsonTextsStore } from '../infrastructure/persistence/json-texts-store.j
 import { JsonFramesStore } from '../infrastructure/persistence/json-frames-store.js';
 import { JsonTasksStore } from '../infrastructure/persistence/json-tasks-store.js';
 import { GitCli } from '../infrastructure/git/git-cli.js';
+import { startClaudeHooks, type ClaudeHooks } from '../infrastructure/agent/claude-hooks.js';
 import { NodePtyFactory } from '../infrastructure/terminal/node-pty-adapter.js';
 import { hasClaudeTranscript, hasProjectConversations } from '../infrastructure/usage/claude-paths.js';
 import { CHANNELS, type BootstrapState, type RestoredSession } from '../shared/contract.js';
@@ -71,6 +72,10 @@ let notes: NotesService;
 let texts: TextsService;
 let frames: FramesService;
 let tasks: TasksService;
+let hooks: ClaudeHooks | null = null;
+/** De quanto em quanto tempo o programa em foreground de cada terminal e conferido. */
+const FOREGROUND_POLL_MS = 1500;
+let foregroundTimer: NodeJS.Timeout | null = null;
 const worktrees = new WorktreeService(new GitCli());
 const worktreeStatus = new WorktreeStatusService(worktrees, (id, status) => send(CHANNELS.worktreeStatus, id, status));
 const flow = new FlowControl();
@@ -464,6 +469,9 @@ function registerIpc(): void {
     if (isSafeExternalUrl(url)) void shell.openExternal(url);
   });
   handle(CHANNELS.interrupt, (_event, id: string) => terminals.interrupt(id));
+  on(CHANNELS.setQueued, (_event, id: unknown, queued: unknown) => {
+    if (typeof id === 'string') terminals.setQueued(id, queued === true);
+  });
   handle(CHANNELS.replay, (_event, id: string) => {
     // O que esta no lote entra no replay; entregar antes garante que nenhum
     // lote misture chunks de antes e de depois dele.
@@ -612,6 +620,8 @@ function shutdown(): void {
   persistBounds();
   usage?.stop();
   worktreeStatus.stop();
+  if (foregroundTimer) clearInterval(foregroundTimer);
+  hooks?.stop();
   output.dispose();
   terminals?.closeAll();
   flushData();
@@ -691,6 +701,8 @@ if (!app.requestSingleInstanceLock()) {
     frames = new FramesService(new JsonFramesStore(app.getPath('userData')));
     tasks = new TasksService(new JsonTasksStore(app.getPath('userData')));
     attention = new AttentionNotifier(() => mainWindow, (id) => send(CHANNELS.focusTerminal, id));
+    // Antes dos terminais: cada um nasce sabendo onde mandar os hooks do Claude.
+    hooks = startClaudeHooks(app.getPath('userData'), process.execPath, (token, event) => terminals.agentEvent(token, event));
     terminals = new TerminalService(new NodePtyFactory(), {
       onData: (id, chunk, seq) => output.push(id, chunk, seq),
       onUpdate: (snapshot) => {
@@ -713,7 +725,9 @@ if (!app.requestSingleInstanceLock()) {
         persistTerminals();
         send(CHANNELS.closed, id);
       },
-    }, (sessionId) => hasClaudeTranscript(sessionId));
+    }, (sessionId) => hasClaudeTranscript(sessionId), hooks?.config ?? null);
+    foregroundTimer = setInterval(() => terminals.refreshForeground(), FOREGROUND_POLL_MS);
+    foregroundTimer.unref();
 
     usage = new UsageService(undefined, (summary) => send(CHANNELS.usageUpdate, summary));
 

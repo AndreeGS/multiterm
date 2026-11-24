@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
+import type { AgentEvent } from '../../domain/terminal/agent.js';
 import { cleanCommand, wantsOwnSession } from '../../domain/terminal/command.js';
 import type { PtyFactory } from '../../domain/terminal/pty.js';
 import type { PaneColor } from '../../domain/workspace/colors.js';
-import { TerminalSession, type TranscriptCheck } from '../../domain/terminal/session.js';
+import { TerminalSession, type HookBinding, type TranscriptCheck } from '../../domain/terminal/session.js';
 import type { ReplaySnapshot, TerminalSize, TerminalSnapshot, TerminalSpec } from '../../domain/terminal/types.js';
 
 export interface TerminalServiceListeners {
@@ -18,16 +19,29 @@ export interface TerminalServiceListeners {
 }
 
 /**
+ * Hooks do Claude Code ligados: o arquivo de `--settings` e as variaveis com
+ * que o script de hook acha o app. Cada terminal ganha ainda um token proprio
+ * (`MULTITERM_HOOK_TOKEN`), que e como o evento chega ao terminal certo.
+ */
+export interface HookConfig {
+  readonly settingsArg: string;
+  readonly env: Readonly<Record<string, string>>;
+}
+
+/**
  * Caso de uso: gerenciar o conjunto de sessoes abertas.
  * Unico ponto do app que cria/destroi terminais.
  */
 export class TerminalService {
   private readonly sessions = new Map<string, TerminalSession>();
+  /** Token de hook -> id do terminal. */
+  private readonly hookTokens = new Map<string, string>();
 
   constructor(
     private readonly ptys: PtyFactory,
     private readonly listeners: TerminalServiceListeners,
     private readonly hasTranscript: TranscriptCheck = () => false,
+    private readonly hooks: HookConfig | null = null,
   ) {}
 
   /**
@@ -44,10 +58,25 @@ export class TerminalService {
     const session = new TerminalSession(id, { ...spec, cwd, claudeSession }, this.ptys, {
       onData: (sid, chunk, seq) => this.listeners.onData(sid, chunk, seq),
       onUpdate: (snapshot) => this.listeners.onUpdate(snapshot),
-    }, this.hasTranscript);
+    }, this.hasTranscript, this.bindHooks(id));
     this.sessions.set(id, session);
     session.start(size);
     return session.snapshot();
+  }
+
+  /** Evento de hook do Claude Code; o token diz de qual terminal. */
+  agentEvent(token: string, event: AgentEvent): void {
+    const id = this.hookTokens.get(token);
+    if (id) this.sessions.get(id)?.agentEvent(event);
+  }
+
+  setQueued(id: string, queued: boolean): void {
+    this.sessions.get(id)?.setQueued(queued);
+  }
+
+  /** Confere o programa em foreground de todos os terminais vivos. */
+  refreshForeground(): void {
+    for (const session of this.sessions.values()) session.refreshForeground();
   }
 
   list(): TerminalSnapshot[] {
@@ -112,6 +141,7 @@ export class TerminalService {
     const session = this.sessions.get(id);
     if (!session) return;
     this.sessions.delete(id);
+    this.forgetHooks(id);
     session.dispose();
     this.listeners.onClose(id);
   }
@@ -119,6 +149,18 @@ export class TerminalService {
   closeAll(): void {
     for (const session of this.sessions.values()) session.dispose();
     this.sessions.clear();
+    this.hookTokens.clear();
+  }
+
+  private bindHooks(id: string): HookBinding | null {
+    if (!this.hooks) return null;
+    const token = randomUUID();
+    this.hookTokens.set(token, id);
+    return { settingsArg: this.hooks.settingsArg, env: { ...this.hooks.env, MULTITERM_HOOK_TOKEN: token } };
+  }
+
+  private forgetHooks(id: string): void {
+    for (const [token, owner] of this.hookTokens) if (owner === id) this.hookTokens.delete(token);
   }
 }
 

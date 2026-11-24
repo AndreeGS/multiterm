@@ -105,6 +105,7 @@ npm run smoke      # teste de integracao do PTY (headless, dentro do Electron)
 | `Ctrl+,` | Configuracoes (tema e tamanho da fonte) |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copiar / colar (o `Ctrl+C` puro continua sendo SIGINT) |
 | `Ctrl+Shift+F` (num terminal) | Buscar no scrollback (`Enter` / `Shift+Enter` navegam, `Esc` fecha) |
+| `Ctrl+Shift+↑` / `Ctrl+Shift+↓` (num terminal) | Prompt anterior / seguinte no scrollback (shell com marcas OSC 133, ver abaixo) |
 | Botao direito (num terminal) | Menu: copiar, colar, buscar, limpar, renomear, cor, reiniciar, diff do worktree, abrir no editor, fechar |
 | `F1` | Lista de atalhos |
 | Duplo clique no nome | Renomear |
@@ -376,6 +377,25 @@ as notas (maximizar, renomear com duplo clique).
 - Salva sozinho em `tasks.json`. Fechar (`✕`) **apaga** a lista; se ela tiver
   tarefas, o app pede confirmacao.
 
+### Fila
+
+Com a lista vinculada a um terminal onde o MultiTerm abriu o Claude Code (ver
+"Estado do Claude Code pelos hooks"), o `⏵⏵` no cabecalho (ou `Ligar a fila`
+na paleta) manda as pendentes uma a uma:
+
+- a primeira vai assim que o Claude estiver parado esperando voce; se ele
+  estiver no meio de uma volta, espera ela terminar;
+- quando ele termina a volta (hook `Stop`), a tarefa enviada e **concluida** e
+  a seguinte vai, na ordem da lista. A que esta com ele mostra `⏵ <terminal>`;
+- entre uma tarefa e outra o terminal nao pede atencao: a fila responde por
+  voce. Quando ela acaba (ou para), o aviso volta;
+- para sozinha quando as pendentes acabam, quando o Claude sai, ou quando o
+  vinculo muda; `⏵⏵` de novo para na hora (a tarefa ja enviada segue com o
+  agente). Esc ou Ctrl+C interrompem a volta, e o Claude nao avisa que ela
+  terminou: a fila espera. Desligar e ligar de novo manda a proxima pendente.
+
+A fila vive so enquanto o app esta aberto: reabrir o app nao a religa sozinho.
+
 ## Enviar texto aos terminais
 
 Notas e tarefas viram roteiros para os agentes:
@@ -474,7 +494,52 @@ progresso (`OSC 9;4`) sao ignorados.
 
 Para o Claude Code mandar esse aviso, escolha o canal de notificacao em
 `/config` (`preferredNotifChannel`): `ghostty` ou `iterm2` mandam a mensagem;
-`terminal_bell` manda so o BEL.
+`terminal_bell` manda so o BEL. Num terminal em que o proprio MultiTerm abriu o
+Claude, nao precisa: os hooks (abaixo) ja avisam.
+
+### Estado do Claude Code pelos hooks
+
+Num terminal com o comando inicial `claude`, o app abre o Claude com
+`--settings <dados>/claude-hooks.json`, que liga hooks em `SessionStart`,
+`UserPromptSubmit`, `Stop`, `Notification` e `SessionEnd`. Os hooks somam com
+os seus: nada no `~/.claude` e tocado, e o cabecalho continua mostrando so
+`claude`. Cada hook roda um script do app que manda o evento ao MultiTerm por
+um socket local (em `$XDG_RUNTIME_DIR`, so do seu usuario), com o token do
+terminal. Com isso, nesse terminal:
+
+- **o aviso vem do Claude, nao do silencio**: acende quando ele termina a volta
+  (`Stop`) e apaga quando voce manda outro prompt. Uma ferramenta lenta que
+  deixa a tela parada nao vira "aguardando", e a TUI redesenhando depois de
+  terminar nao apaga o aviso. O ponto e o tooltip dizem *Claude trabalhando*,
+  *aguardando voce* ou *pedindo permissao*;
+- **pedido de permissao** (ou pergunta do Claude) vira pedido explicito, com
+  o texto dele (`🔔 Claude needs your permission to use Bash`) e notificacao
+  do sistema se a janela nao estiver em foco. Responder no terminal limpa;
+- **a conversa segue o `/clear` e o `/resume`**: o terminal passa a acompanhar
+  a conversa nova, o consumo no cabecalho tambem, e reiniciar (`⟳`) ou
+  restaurar a sessao retoma a conversa em que voce estava;
+- habilita a **fila** da lista de tarefas.
+
+Um `claude` digitado a mao no terminal nao passa por isso (fica com o palpite
+pelo silencio), nem um comando que ja traga `--settings` ou rode com `-p`. Se o
+Claude cair sem o `SessionEnd`, o app percebe pelo programa em foreground e
+volta ao palpite. No Windows os hooks ficam desligados.
+
+### Comandos do shell e espera
+
+O cabecalho de cada terminal ganha selos, a esquerda do status do worktree:
+
+- `ha 5 min`: ha quanto tempo ele esta aguardando voce (a partir de 1 minuto);
+- `✓ 12s` / `✗ 1 · 3m 2s`: o ultimo comando, quando levou 3s ou mais, com o
+  exit code e a duracao. Some quando o proximo comando comeca;
+- `▸ vim`: o programa em foreground, quando nao e o do comando inicial
+  (conferido a cada 1,5s).
+
+O resultado do comando e o pulo entre prompts (`Ctrl+Shift+↑/↓`) dependem das
+**marcas de prompt OSC 133** do shell. No bash o MultiTerm as liga sozinho pelo
+ambiente (`PROMPT_COMMAND` e `PS0`, sem rc proprio); o fish 4 ja as emite; no
+zsh, so se voce (ou o seu tema) configurou. Se o seu `.bashrc` substituir o
+`PROMPT_COMMAND` inteiro, as marcas nao aparecem e o resto do app segue igual.
 
 ## Consumo de tokens
 
@@ -485,9 +550,9 @@ modelo; clicar atualiza na hora (tambem atualiza sozinho a cada minuto).
 
 **Por terminal**: o cabecalho de cada terminal com `claude` mostra o consumo
 da conversa dele (`90k · US$ 0,18`, com o detalhe no tooltip), e a paleta
-repete o numero. Conta a conversa inteira, inclusive subagentes. Limitacao:
-`/clear` ou `/resume` dentro do Claude troca de conversa, e dali em diante o
-numero do terminal para de acompanhar.
+repete o numero. Conta a conversa inteira, inclusive subagentes. Com os hooks
+ligados, `/clear` e `/resume` dentro do Claude levam o numero para a conversa
+nova; sem eles (um `claude` digitado a mao), o numero fica na primeira.
 
 Leitura incremental — cada arquivo e lido so a partir de onde parou, em
 streaming, e arquivos sem escrita recente sao ignorados. Uma linha que ainda
@@ -534,7 +599,8 @@ aparecer, deixando o app travado esperando um clique impossivel.
 src/
   domain/          regras e tipos, sem Electron e sem node-pty
     terminal/      TerminalSession (ciclo de vida, atividade, replay), porta Pty,
-                   comando inicial e deteccao de BEL/OSC de notificacao
+                   comando inicial, deteccao de BEL/OSC de notificacao, marcas
+                   de prompt (OSC 133) e estado do agente pelos hooks
     workspace/     workspaces, layouts (templates, divisorias), templates de
                    terminal, cores e formato do config.json
     notes/         formato e validacao das notas
@@ -549,6 +615,7 @@ src/
     tasks/         TasksService — listas de tarefas, com save debounced
   infrastructure/  adaptadores concretos
     terminal/      NodePtyFactory implementa a porta Pty
+    agent/         socket dos hooks do Claude Code, script e --settings
     persistence/   JsonConfigStore, JsonNotesStore, JsonTextsStore,
                    JsonTasksStore, JsonFramesStore (escrita atomica)
   main/            processo principal do Electron: janela + IPC + wiring
@@ -581,9 +648,12 @@ Regras que mantem o acoplamento baixo:
   exposta pelo `preload`, tipada em `shared/contract.ts`.
 - Nada e executado automaticamente. O app so sobe o shell que voce pediu, no
   diretorio que voce escolheu. Os outros processos sao o `git` — so para
-  terminais com worktree (porta `Git` em `domain/git`, adaptador `GitCli`) —
-  e o editor, quando voce pede "Abrir no editor". O diff e o editor recebem
-  o terminal pelo id: o main e quem decide que pasta usar.
+  terminais com worktree (porta `Git` em `domain/git`, adaptador `GitCli`) —,
+  o editor, quando voce pede "Abrir no editor", e o script de hook, que o
+  proprio Claude roda (com o binario do app em modo Node) quando foi aberto
+  pelo comando inicial. O diff e o editor recebem o terminal pelo id: o main e
+  quem decide que pasta usar. O socket dos hooks so aceita eventos com o token
+  de um terminal aberto, e um evento so mexe no estado daquele terminal.
 
 ## Proximos passos naturais
 

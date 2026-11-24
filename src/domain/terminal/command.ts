@@ -61,6 +61,19 @@ export function wantsOwnSession(command: string): boolean {
   return isClaudeCommand(command) && !SESSION_FLAGS.test(command);
 }
 
+/** `claude -p`/`--print` roda uma vez e sai: nao e uma sessao para acompanhar. */
+const PRINT_FLAG = /(^|\s)(-p|--print)(\s|=|$)/;
+
+/**
+ * Liga os hooks do MultiTerm num `claude` interativo (`--settings <arquivo>`,
+ * logo depois do executavel). Outros comandos, ou um que ja passa
+ * `--settings` (o Claude aceita um so), ficam iguais.
+ */
+export function withHookSettings(command: string, settingsArg: string): string {
+  if (!isClaudeCommand(command) || PRINT_FLAG.test(command) || /(^|\s)--settings(\s|=|$)/.test(command)) return command;
+  return withFlags(command, `--settings ${settingsArg}`);
+}
+
 /** Insere `flags` logo depois do executavel (`claude <flags> --model x`). */
 function withFlags(command: string, flags: string): string {
   const trimmed = command.trim();

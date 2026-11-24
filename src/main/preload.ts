@@ -37,6 +37,7 @@ const api: MultiTermApi = {
   replayTerminal: (id) => ipcRenderer.invoke(CHANNELS.replay, id),
 
   acknowledgeTerminal: (id) => ipcRenderer.send(CHANNELS.acknowledge, id),
+  setTerminalQueued: (id, queued) => ipcRenderer.send(CHANNELS.setQueued, id, queued),
   writeTerminal: (id, data) => ipcRenderer.send(CHANNELS.write, id, data),
   resizeTerminal: (id, cols, rows) => ipcRenderer.send(CHANNELS.resize, id, cols, rows),
   setTerminalRect: (id, rect: CanvasRect | null) => ipcRenderer.send(CHANNELS.setRect, id, rect),
